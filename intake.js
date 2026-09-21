@@ -57,7 +57,7 @@ export function assessIntake(input, extractedFields = {}, mode = 'manual') {
     location: 'Which building, floor or area is affected?',
     priority: 'Which priority do you want to assign: Low, Medium, High or Urgent?',
     occurredAt: 'When did the issue start? Enter Unknown if you do not know.',
-    impact: 'Who or what is affected? Enter Unknown if you do not know.'
+    impact: 'How is this issue affecting occupants or services, such as discomfort, delays or loss of power? Enter Unknown if you do not know.'
   };
   const missingFields = Object.keys(questions).filter(key => !data[key]);
   return {
