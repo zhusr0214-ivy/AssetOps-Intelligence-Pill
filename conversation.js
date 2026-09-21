@@ -6,6 +6,7 @@ export function manualFieldsFor(incident) {
 }
 
 export function conversationReply(incident, latest) {
+  const chinese = /[\u3400-\u9fff]/u.test(latest);
   const analysis = assessIntake(incident);
   const domain = analysis.followUpQuestions.find(item => item.domain);
   const conflicts = incident.conflicts?.length;
@@ -19,14 +20,18 @@ export function conversationReply(incident, latest) {
     lines.push(domain.question);
   }
   if (conflicts) {
-    lines.push('Some information differs from the current summary. Please resolve the highlighted items.');
+    lines.push(chinese ? '有信息与当前摘要不一致，请先在事件摘要中确认待核对项。' : 'Some information differs from the current summary. Please resolve the highlighted items before submitting.');
   } else if (!domain) {
     const question = analysis.followUpQuestions.find(item => item.field !== 'priority');
-    if (question) lines.push(question.question);
+    const questions = {
+      description: '请描述一下发生了什么问题。', location: '问题发生在哪栋楼、哪层或哪个区域？',
+      occurredAt: '大约什么时候开始的？不清楚可以直接说不知道。', impact: '目前影响了哪些人或区域？不清楚可以直接说不知道。'
+    };
+    if (question) lines.push(chinese ? questions[question.field] || question.question : question.question);
   }
-  if (!incident.priority) lines.push('Please choose Priority in the summary.');
-  if (!lines.length) return 'The basic intake information is complete. Review the summary and confirm submission for triage.';
-  return 'The case summary is updated.\n' + lines.join('\n');
+  if (!incident.priority) lines.push(chinese ? '请在摘要中选择 Priority。' : 'Please choose Priority in the summary.');
+  if (!lines.length) return chinese ? '事件信息已经齐全，请核对摘要，确认后提交分诊。' : 'The case information is complete. Review the summary and confirm submission for triage.';
+  return (chinese ? '已更新事件摘要。\n' : 'The case summary is updated.\n') + lines.join('\n');
 }
 
 export async function sendMessage(store, incident, input, agent) {
