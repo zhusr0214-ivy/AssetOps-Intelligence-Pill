@@ -3,18 +3,13 @@ import { renderConversation } from './conversation.js';
 export const labels = {
   title: 'Title', description: 'Description', location: 'Location', asset: 'Asset',
   category: 'Category', occurredAt: 'Started at', impact: 'Impact',
-  observations: 'Readings / observations', actionsTaken: 'Actions already taken', priority: 'Priority'
+  observations: 'Readings / observations', actionsTaken: 'Actions already taken', affectedScope: 'Affected scope', priority: 'Priority'
 };
 export const priorities = { low: 'Low', medium: 'Medium', high: 'High', urgent: 'Urgent' };
 export const categories = {
-  hvac: 'HVAC / General',
-  water_leak: 'Plumbing / Water Leak',
-  energy: 'Energy Anomaly',
-  other: 'Other',
-  hvac_cooling: 'HVAC / Cooling Performance',
-  hvac_local_comfort: 'HVAC / Local Thermal Comfort',
-  electrical_distribution: 'Electrical / Distribution',
-  lift_fault: 'Vertical Transportation / Lift Fault'
+  hvac: 'HVAC / General', water_leak: 'Plumbing / Water Leak', energy: 'Energy Anomaly', other: 'Other',
+  hvac_cooling: 'HVAC / Cooling Performance', hvac_local_comfort: 'HVAC / Local Thermal Comfort',
+  electrical_distribution: 'Electrical / Distribution', lift_fault: 'Vertical Transportation / Lift Fault'
 };
 const statuses = { draft: 'Draft', needs_info: 'Needs information', ready_for_triage: 'Ready for triage' };
 export const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
