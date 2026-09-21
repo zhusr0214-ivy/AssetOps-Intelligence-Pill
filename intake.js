@@ -1,6 +1,6 @@
 export const priorities = ['low', 'medium', 'high', 'urgent'];
 export const categories = ['hvac', 'water_leak', 'energy', 'other', 'hvac_cooling', 'hvac_local_comfort', 'electrical_distribution', 'lift_fault'];
-export const fields = ['title', 'description', 'location', 'asset', 'category', 'occurredAt', 'impact', 'observations', 'actionsTaken', 'priority'];
+export const fields = ['title', 'description', 'location', 'asset', 'category', 'occurredAt', 'impact', 'observations', 'actionsTaken', 'affectedScope', 'priority'];
 
 export function validateFields(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw Object.assign(new Error('Expected a case object.'), { status: 400 });
@@ -69,7 +69,7 @@ const domainQuestions = [
   { id: 'electrical_trip', categories: ['electrical_distribution'], field: 'observations', binary: true,
     question: 'Has any breaker tripped?', zh: '是否有断路器跳闸？',
     covered: /breaker.*(?:tripped|trip)|断路器.*跳闸/i },
-  { id: 'hvac_scope', categories: ['hvac', 'hvac_cooling', 'hvac_local_comfort'], field: 'observations',
+  { id: 'hvac_scope', categories: ['hvac', 'hvac_cooling', 'hvac_local_comfort'], field: 'affectedScope',
     question: 'Is the issue limited to one room or zone, or are multiple areas affected?', zh: '问题仅限一个房间或区域，还是多个区域都受影响？',
     covered: /(?:limited|confined) to|multiple (?:areas|zones).*affected|affects the east|nearby offices (?:appear |are )?normal|仅限|多个区域.*受影响|附近办公室.*正常|东区.*西区/i },
   { id: 'hvac_local_airflow', categories: ['hvac_local_comfort'], field: 'observations',
@@ -99,11 +99,12 @@ function questionAnswer(messages, question) {
 
 function assessDomain(data, messages = []) {
   // Only user reports and saved facts count as evidence, not assistant questions.
-  const facts = [data.description, data.observations, data.actionsTaken,
+  const facts = [data.description, data.observations, data.actionsTaken, data.affectedScope,
     ...messages.filter(m => m.role === 'user').map(m => m.content)].filter(Boolean).join('\n');
   const pending = [];
   const unresolvedSafety = [];
   for (const question of domainQuestions.filter(q => q.categories.includes(data.category))) {
+    if (question.id === 'hvac_scope' && data.affectedScope) continue;
     if (question.covered.test(facts)) continue;
     const answer = questionAnswer(messages, question);
     if (answer === 'unknown' && question.safety) unresolvedSafety.push(question.id);
