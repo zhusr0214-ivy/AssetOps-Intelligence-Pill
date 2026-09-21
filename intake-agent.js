@@ -11,7 +11,7 @@ Observations: measurements, setpoints, alarms, symptoms and equipment conditions
 ActionsTaken: actions already performed, such as manual resets, warning signs and restricted access. Preserve explicit statements that no action has been taken. Do not include proposed actions.
 Return a JSON object with exactly these string fields: title, category, location, asset, occurredAt, impact, observations, actionsTaken.
 Use an empty string for missing facts. Never infer an equipment ID, impact, time, reading or action.
-For location, asset, occurredAt, impact, observations and actionsTaken, copy an exact contiguous substring of description. Preserve the original language, qualifiers and negations. Unknown is a valid explicit answer.
+For location, asset, occurredAt and impact, copy an exact contiguous substring of description. For observations and actionsTaken, include all relevant facts as separate lines within the JSON string; each line must be an exact substring of description. Do not add labels or paraphrase facts. Preserve the original language, qualifiers and negations. Unknown is a valid explicit answer.
 Title must be a short incident label in the description's language. For English, use 4-10 words and no more than 80 characters. Prefer location + asset or issue type. Do not copy a full sentence from the description. Use only provided facts. Example: Level 18 AHU Cooling Issue.
 Category must be one of: hvac, water_leak, energy, other, hvac_cooling, hvac_local_comfort, electrical_distribution, lift_fault.
 Use hvac_cooling for AHU cooling performance issues.
@@ -35,7 +35,7 @@ Observations: measurements, setpoints, alarms, symptoms and equipment conditions
 ActionsTaken: actions already performed, such as manual resets, warning signs and restricted access. Preserve explicit statements that no action has been taken. Do not include proposed actions.
 Return only JSON with these string fields: title, category, location, asset, occurredAt, impact, observations, actionsTaken, plus corrections (an array of field names).
 For each field, keep the current value unless user messages provide new information. Use empty strings for unknown facts; do not invent facts.
-For factual fields copy an exact contiguous substring of a user message. Preserve negations. Explicit Unknown answers are valid.
+For location, asset, occurredAt and impact, copy an exact contiguous substring of a user message. For observations and actionsTaken, facts may be separate lines within the JSON string; each line must be an exact substring of a USER message. Do not add labels or paraphrase facts. Preserve negations. Explicit Unknown answers are valid.
 Title must be a short incident label in the user's language. For English, use 4-10 words and no more than 80 characters. Prefer location + asset or issue type. Do not copy a full sentence from a message. Keep an existing concise title unless new facts materially change the incident. Use only provided facts.
 Category must be one of: hvac, water_leak, energy, other, hvac_cooling, hvac_local_comfort, electrical_distribution, lift_fault.
 Use hvac_cooling for AHU cooling performance issues.
@@ -108,10 +108,29 @@ export function createIntakeAgent({ env = process.env, fetchImpl = fetch, timeou
     const latest = userMessages.at(-1) || '';
     for (const key of extractionFields) {
       const value = proposed[key].trim();
+      if (!value) continue;
+
+      // 首次输入和后续对话共用同一套来源检查。
+      const evidenceLines = value
+        .split(/\r?\n/)
+        .map(line => line.replace(/^\s*[-*•]\s*/, '').trim())
+        .filter(Boolean);
+      const isEvidenceList = ['observations', 'actionsTaken'].includes(key);
+      const supported =
+        key === 'title' ||
+        key === 'category' ||
+        userMessages.some(message => message.includes(value)) ||
+        (
+          isEvidenceList &&
+          evidenceLines.length > 0 &&
+          evidenceLines.every(line =>
+            userMessages.some(message => message.includes(line))
+          )
+        );
+      if (!supported) continue;
+
       if (context) {
-        if (!value || value === supplied[key]) continue;
-        const supported = key === 'title' || key === 'category' || userMessages.some(message => message.includes(value));
-        if (!supported) continue;
+        if (value === supplied[key]) continue;
         const locked = context.manualFields.includes(key);
         const corrected = Array.isArray(proposed.corrections) && proposed.corrections.includes(key) && latest.includes(value);
         if ((locked || supplied[key]) && (locked || !corrected)) {
@@ -120,8 +139,9 @@ export function createIntakeAgent({ env = process.env, fetchImpl = fetch, timeou
         } else merged[key] = extracted[key] = key === 'title' ? value.slice(0, 150) : value;
         continue;
       }
-      // Untrusted model output may only fill blanks; factual values must occur in the source.
-      if (!supplied[key] && value && (key === 'title' || key === 'category' || supplied.description.includes(value))) {
+
+      // 已通过来源检查；首次提取只填空白字段。
+      if (!supplied[key]) {
         merged[key] = extracted[key] = key === 'title' ? value.slice(0, 150) : value;
       }
     }
