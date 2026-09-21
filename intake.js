@@ -1,5 +1,14 @@
 export const priorities = ['low', 'medium', 'high', 'urgent'];
-export const categories = ['hvac', 'water_leak', 'energy', 'other'];
+export const categories = [
+  'hvac',
+  'water_leak',
+  'energy',
+  'other',
+  'hvac_cooling',
+  'hvac_local_comfort',
+  'electrical_distribution',
+  'lift_fault'
+];
 export const fields = ['title', 'description', 'location', 'asset', 'category', 'occurredAt', 'impact', 'observations', 'actionsTaken', 'priority'];
 
 export function validateFields(input) {
