@@ -6,7 +6,16 @@ export const labels = {
   observations: 'Readings / observations', actionsTaken: 'Actions already taken', priority: 'Priority'
 };
 export const priorities = { low: 'Low', medium: 'Medium', high: 'High', urgent: 'Urgent' };
-export const categories = { hvac: 'HVAC issue', water_leak: 'Water leak', energy: 'Energy anomaly', other: 'Other' };
+export const categories = {
+  hvac: 'HVAC / General',
+  water_leak: 'Plumbing / Water Leak',
+  energy: 'Energy Anomaly',
+  other: 'Other',
+  hvac_cooling: 'HVAC / Cooling Performance',
+  hvac_local_comfort: 'HVAC / Local Thermal Comfort',
+  electrical_distribution: 'Electrical / Distribution',
+  lift_fault: 'Vertical Transportation / Lift Fault'
+};
 const statuses = { draft: 'Draft', needs_info: 'Needs information', ready_for_triage: 'Ready for triage' };
 export const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
 const e = escapeHtml;
