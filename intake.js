@@ -54,7 +54,7 @@ export function assessIntake(input, extractedFields = {}, mode = 'manual') {
   const data = Object.fromEntries(fields.map(key => [key, supplied[key] || '']));
   const questions = {
     description: 'What happened? Describe the issue you observed.',
-    location: 'Which building, floor or area is affected?',
+    location: 'Where is the issue occurring? Please include the building, floor, and room or area if known.',
     priority: 'Which priority do you want to assign: Low, Medium, High or Urgent?',
     occurredAt: 'When did the issue start? Enter Unknown if you do not know.',
     impact: 'How is this issue affecting occupants or services, such as discomfort, delays or loss of power? Enter Unknown if you do not know.'
