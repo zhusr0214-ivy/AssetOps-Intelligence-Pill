@@ -1,5 +1,10 @@
 import { api, labels, priorities, categories, options, escapeHtml as e, details } from './incidents.js';
 
+export function visibleAssistantText(message, incident) {
+  if (message.role !== 'assistant' || !incident.priority || message !== incident.messages?.at(-1)) return message.content;
+  return message.content.replace(/Please choose Priority in the summary\.|\u8bf7\u5728\u6458\u8981\u4e2d\u9009\u62e9 Priority。/g, '').trim();
+}
+
 export function renderConversation(view, initial, navigate) {
   let incident = initial;
   let draftText = '';
@@ -35,7 +40,7 @@ export function renderConversation(view, initial, navigate) {
         <section class="conversation-main" aria-label="Incident conversation"><h3>Conversation</h3>
           <div class="message-log" role="log" aria-label="Case messages">
             <article class="message assistant"><strong>Intake assistant</strong><p>Please describe the incident, including its location, symptoms, and any known readings or actions already taken.</p></article>
-            ${(incident.messages || []).map(message => `<article class="message ${message.role === 'user' ? 'user' : 'assistant'}"><strong>${message.role === 'user' ? 'You' : 'Intake assistant'}</strong><p>${e(message.content)}</p>${message.state && message.state !== 'complete' ? `<small>${message.state === 'failed' ? 'Analysis failed. Message saved.' : 'Awaiting analysis'}</small>` : ''}</article>`).join('')}
+            ${(incident.messages || []).map(message => `<article class="message ${message.role === 'user' ? 'user' : 'assistant'}"><strong>${message.role === 'user' ? 'You' : 'Intake assistant'}</strong><p>${e(visibleAssistantText(message, incident))}</p>${message.state && message.state !== 'complete' ? `<small>${message.state === 'failed' ? 'Analysis failed. Message saved.' : 'Awaiting analysis'}</small>` : ''}</article>`).join('')}
           </div>
           ${waiting ? `<div class="retry-row"><span>Message saved. ${busy ? 'Analyzing...' : 'Analysis incomplete.'}</span><button type="button" id="retry-message" ${busy ? 'disabled' : ''}>Retry analysis</button></div>` : ''}
           <form id="message-form" class="message-composer"><label for="case-message">Message<textarea id="case-message" maxlength="6000" rows="3" required ${busy || waiting ? 'disabled' : ''} placeholder="Describe the issue or add an update">${e(draftText)}</textarea></label><div class="actions"><button class="primary" type="submit" ${busy || waiting ? 'disabled' : ''}>Send message</button></div></form>
