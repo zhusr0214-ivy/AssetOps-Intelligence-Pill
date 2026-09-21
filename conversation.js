@@ -6,38 +6,27 @@ export function manualFieldsFor(incident) {
 }
 
 export function conversationReply(incident, latest) {
-  const chinese = /[\u3400-\u9fff]/u.test(latest);
   const analysis = assessIntake(incident);
   const domain = analysis.followUpQuestions.find(item => item.domain);
   const conflicts = incident.conflicts?.length;
   const lines = [];
 
   if (analysis.unresolvedSafety.length) {
-    lines.push(chinese
-      ? '此前回答为“不清楚”的安全情况仍待核实，请交由现场负责人或对应专业团队确认。'
-      : 'Safety information previously answered as unknown still needs verification by the responsible onsite team.');
+    lines.push('Safety information previously answered as unknown still needs verification by the responsible onsite team.');
   }
   if (domain && (!conflicts || domain.safety)) {
-    // 每轮只问一个领域问题，让 Yes / No / Unknown 的指向清楚。
-    lines.push(chinese ? domain.zh : domain.question);
+    // Ask one domain question so brief answers have a clear context.
+    lines.push(domain.question);
   }
   if (conflicts) {
-    lines.push(chinese ? '有信息与当前摘要不一致，请在摘要中确认待核对项。' : 'Some information differs from the current summary. Please resolve the highlighted items.');
+    lines.push('Some information differs from the current summary. Please resolve the highlighted items.');
   } else if (!domain) {
-    const translations = {
-      description: '请描述一下发生了什么问题。',
-      location: '问题发生在哪里？请提供已知的楼栋、楼层、房间或区域。',
-      occurredAt: '大约什么时候开始的？不清楚可以直接说不知道。',
-      impact: '对人员或服务造成了什么影响，例如不适、等待或停电？不清楚可以直接说不知道。'
-    };
     const question = analysis.followUpQuestions.find(item => item.field !== 'priority');
-    if (question) lines.push(chinese ? translations[question.field] || question.question : question.question);
+    if (question) lines.push(question.question);
   }
-  if (!incident.priority) lines.push(chinese ? '请在摘要中选择 Priority。' : 'Please choose Priority in the summary.');
-  if (!lines.length) return chinese
-    ? '基本信息已齐，请核对摘要，确认后提交分诊。'
-    : 'The basic intake information is complete. Review the summary and confirm submission for triage.';
-  return (chinese ? '已更新事件摘要。\n' : 'The case summary is updated.\n') + lines.join('\n');
+  if (!incident.priority) lines.push('Please choose Priority in the summary.');
+  if (!lines.length) return 'The basic intake information is complete. Review the summary and confirm submission for triage.';
+  return 'The case summary is updated.\n' + lines.join('\n');
 }
 
 export async function sendMessage(store, incident, input, agent) {
