@@ -7,7 +7,8 @@ Extract only information stated in description. Do not diagnose, recommend repai
 Return a JSON object with exactly these string fields: title, category, location, asset, occurredAt, impact, observations, actionsTaken.
 Use an empty string for missing facts. Never infer an equipment ID, impact, time, reading or action.
 For location, asset, occurredAt, impact, observations and actionsTaken, copy an exact contiguous substring of description. Preserve the original language, qualifiers and negations. Unknown is a valid explicit answer.
-Title may be a concise summary in the description's language. Category must be hvac, water_leak, energy or other; use other for ambiguous cases.
+Title must be a short incident label in the description's language. For English, use 4-10 words and no more than 80 characters. Prefer location + asset or issue type. Do not copy a full sentence from the description. Use only provided facts. Example: Level 18 AHU Cooling Issue.
+Category must be hvac, water_leak, energy or other; use other for ambiguous cases.
 Do not change fields already supplied by the user. Do not output priority, description, status or readiness.
 Return only JSON, with no explanation or markdown.`;
 
@@ -18,7 +19,8 @@ Read the conversation and current fields. Extract information from USER messages
 Return only JSON with these string fields: title, category, location, asset, occurredAt, impact, observations, actionsTaken, plus corrections (an array of field names).
 For each field, keep the current value unless user messages provide new information. Use empty strings for unknown facts; do not invent facts.
 For factual fields copy an exact contiguous substring of a user message. Preserve negations. Explicit Unknown answers are valid.
-Title may summarize the issue; category must be hvac, water_leak, energy or other.
+Title must be a short incident label in the user's language. For English, use 4-10 words and no more than 80 characters. Prefer location + asset or issue type. Do not copy a full sentence from a message. Keep an existing concise title unless new facts materially change the incident. Use only provided facts.
+Category must be hvac, water_leak, energy or other.
 corrections contains only fields explicitly corrected by the LATEST user message, e.g. 'actually floor 19'. An ambiguous different value is NOT an explicit correction.
 Do not output priority, description, status, recommendations, diagnosis or actions to execute. Never assign priority. Preserve user language.`;
 
