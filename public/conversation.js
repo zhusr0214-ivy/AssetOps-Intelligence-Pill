@@ -34,7 +34,7 @@ export function renderConversation(view, initial, navigate) {
       <div class="conversation-layout" aria-busy="${busy}">
         <section class="conversation-main" aria-label="Incident conversation"><h3>Conversation</h3>
           <div class="message-log" role="log" aria-label="Case messages">
-            <article class="message assistant"><strong>Intake assistant</strong><p>What can I help you?</p></article>
+            <article class="message assistant"><strong>Intake assistant</strong><p>Please describe the incident, including its location, symptoms, and any known readings or actions already taken.</p></article>
             ${(incident.messages || []).map(message => `<article class="message ${message.role === 'user' ? 'user' : 'assistant'}"><strong>${message.role === 'user' ? 'You' : 'Intake assistant'}</strong><p>${e(message.content)}</p>${message.state && message.state !== 'complete' ? `<small>${message.state === 'failed' ? 'Analysis failed. Message saved.' : 'Awaiting analysis'}</small>` : ''}</article>`).join('')}
           </div>
           ${waiting ? `<div class="retry-row"><span>Message saved. ${busy ? 'Analyzing...' : 'Analysis incomplete.'}</span><button type="button" id="retry-message" ${busy ? 'disabled' : ''}>Retry analysis</button></div>` : ''}
