@@ -58,20 +58,20 @@ corrections contains only fields explicitly corrected by the LATEST user message
 Do not output priority, description, status, recommendations, diagnosis or actions to execute. Never assign priority. Preserve user language.`;
 
 
-// 明确不知道与未提供不同；不把 Not provided 归一化为已回答。
-const isUnknown = value => /^(?:unknown|not sure|(?:i )?don['’]?t know|不知道|不清楚|未知)[.!。]?$/i.test(value.trim());
+// Distinguish an explicit unknown answer from a missing value.
+const isUnknown = value => /^(?:unknown|not sure|(?:i )?don['’]?t know|\u4e0d\u77e5\u9053|\u4e0d\u6e05\u695a|\u672a\u77e5)[.!。]?$/i.test(value.trim());
 
 function unknownTarget(messages, latest) {
-  const explicit = latest.match(/^(?:started at|start time|occurred at|开始时间|发生时间)\s*[:：]\s*(.+)$/i);
+  const explicit = latest.match(/^(?:started at|start time|occurred at|\u5f00\u59cb\u65f6\u95f4|\u53d1\u751f\u65f6\u95f4)\s*[:：]\s*(.+)$/i);
   if (explicit && isUnknown(explicit[1])) return 'occurredAt';
   if (!isUnknown(latest)) return '';
   const question = messages?.filter(message => message.role === 'assistant').at(-1)?.content || '';
   const candidates = [
-    ['occurredAt', /when did|when .*start|how long|什么时候|开始时间|发生时间/i],
-    ['impact', /who or what is affected|how .*affecting occupants|影响了哪些|造成.*影响/i],
-    ['location', /which building|where is|发生在哪|问题在哪里/i],
-    ['safety', /trapped|smoke|burning smell|被困|烟雾|焦味/i],
-    ['evidence', /what .*temperature|what .*pressure|what .*airflow|温度是多少|压差|风量/i]
+    ['occurredAt', /when did|when .*start|how long|\u4ec0\u4e48\u65f6\u5019|\u5f00\u59cb\u65f6\u95f4|\u53d1\u751f\u65f6\u95f4/i],
+    ['impact', /who or what is affected|how .*affecting occupants|\u5f71\u54cd\u4e86\u54ea\u4e9b|\u9020\u6210.*\u5f71\u54cd/i],
+    ['location', /which building|where is|\u53d1\u751f\u5728\u54ea|\u95ee\u9898\u5728\u54ea\u91cc/i],
+    ['safety', /trapped|smoke|burning smell|\u88ab\u56f0|\u70df\u96fe|\u7126\u5473/i],
+    ['evidence', /what .*temperature|what .*pressure|what .*airflow|\u6e29\u5ea6\u662f\u591a\u5c11|\u538b\u5dee|\u98ce\u91cf/i]
   ].filter(([, pattern]) => pattern.test(question));
   return candidates.length === 1 && ['occurredAt', 'impact'].includes(candidates[0][0]) ? candidates[0][0] : '';
 }
@@ -79,14 +79,14 @@ function unknownTarget(messages, latest) {
 function conciseTitle(title, fields, source) {
   const shortEnough = value => value && value.length <= 80 && value.split(/\s+/).length <= 10;
   if (shortEnough(title)) return title;
-  const chinese = /[\u3400-\u9fff]/u.test(source);
+
   const issues = {
-    hvac_cooling: ['Cooling Issue', '制冷异常'], hvac_local_comfort: ['Overheating', '局部过热'],
-    water_leak: ['Water Leak', '漏水'], electrical_distribution: ['Power Disruption', '配电异常'],
-    lift_fault: ['Lift Fault', '电梯故障'], hvac: ['HVAC Issue', '空调异常'], energy: ['Energy Anomaly', '能耗异常']
+    hvac_cooling: 'Cooling Issue', hvac_local_comfort: 'Overheating',
+    water_leak: 'Water Leak', electrical_distribution: 'Power Disruption',
+    lift_fault: 'Lift Fault', hvac: 'HVAC Issue', energy: 'Energy Anomaly'
   };
-  const issue = (issues[fields.category] || ['Incident', '设备事件'])[chinese ? 1 : 0];
-  const location = fields.location?.match(/Meeting Room\s+[\w-]+|(?:Level|Floor)\s*\d+|\d+层/i)?.[0] || '';
+  const issue = issues[fields.category] || 'Incident';
+  const location = fields.location?.match(/Meeting Room\s+[\w-]+|(?:Level|Floor)\s*\d+|\d+\u5c42/i)?.[0]?.replace(/(\d+)\u5c42/, 'Level $1') || '';
   const asset = fields.asset && !isUnknown(fields.asset) && fields.asset.length <= 30 ? fields.asset : '';
   const generated = [...new Set([location, asset, issue].filter(Boolean))].join(' ');
   return shortEnough(generated) ? generated : [location, issue].filter(Boolean).join(' ');
@@ -164,7 +164,7 @@ export function createIntakeAgent({ env = process.env, fetchImpl = fetch, timeou
       const value = unknownValue ? 'Unknown' : rawValue;
       if (!value) continue;
 
-      // 首次输入和后续对话共用同一套来源检查。
+      // Use the same source validation for initial and follow-up messages.
       const evidenceLines = value
         .split(/\r?\n/)
         .map(line => line.replace(/^\s*[-*•]\s*/, '').trim())
@@ -193,7 +193,7 @@ export function createIntakeAgent({ env = process.env, fetchImpl = fetch, timeou
             .map(line => line.replace(/^\s*[-*•]\s*/, '').trim())
             .filter(Boolean);
 
-          // 只追加本轮用户提供的新事实，避免重复添加历史内容。
+          // Append new facts from this turn without duplicating earlier evidence.
           const additions = [...new Set(evidenceLines)].filter(line =>
             (!current || latest.includes(line)) && !current.includes(line) && !currentLines.includes(line)
           );
@@ -201,7 +201,7 @@ export function createIntakeAgent({ env = process.env, fetchImpl = fetch, timeou
           const hasLatestEvidence = evidenceLines.some(line => latest.includes(line));
 
           if (reviewRequired) {
-            // 涉及纠正或矛盾时，让用户确认完整的新字段，避免误删其他事实。
+            // Ask for confirmation before replacing corrected or conflicting evidence.
             if (hasLatestEvidence) conflicts.push({ field: key, current, proposed: value });
             continue;
           }
@@ -217,7 +217,7 @@ export function createIntakeAgent({ env = process.env, fetchImpl = fetch, timeou
           continue;
         }
 
-        // 分类是推导标签，不要求分类代码出现在用户原话中。
+        // Category codes are derived labels and need not occur literally in user text.
         if (key === 'category') {
           const downgrade = ['other', 'hvac'].includes(value) && supplied.category && !['other', 'hvac'].includes(supplied.category);
           if (downgrade && !proposed.corrections?.includes(key)) continue;
@@ -239,12 +239,12 @@ export function createIntakeAgent({ env = process.env, fetchImpl = fetch, timeou
         continue;
       }
 
-      // 已通过来源检查；首次提取只填空白字段。
+      // Source validation passed; initial extraction only fills empty fields.
       if (!supplied[key]) {
         merged[key] = extracted[key] = key === 'title' ? value.slice(0, 150) : value;
       }
     }
-    // 系统自动生成的长标题可重写；人工标题保留确认步骤。
+    // Shorten generated titles while preserving confirmation for manual titles.
     const requestedTitle = proposed.title.trim();
     const currentTitle = supplied.title || '';
     const nextTitle = conciseTitle(requestedTitle || currentTitle, merged, latest || supplied.description);
