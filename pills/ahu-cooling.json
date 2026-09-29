@@ -1,0 +1,45 @@
+{
+  "id": "assetops-ahu-cooling",
+  "name": "AHU Cooling Performance",
+  "version": "0.1.0-demo",
+  "status": "demo",
+  "owner": "AssetOps project team",
+  "source": "Illustrative project-authored rules. Not a validated engineering SOP.",
+  "scope": "AHU cooling-performance incidents. Local VAV issues, electrical faults, water leaks and lift faults require other capabilities.",
+  "rules": [
+    {
+      "id": "HVAC-01",
+      "title": "Verify the reported cooling condition",
+      "guidance": "Compare reported room and supply-air readings with the stated setpoint and timestamps. A warm room alone does not establish a failed component. Do not invent normal ranges or measurements.",
+      "actionIds": ["check-readings", "check-trends"]
+    },
+    {
+      "id": "HVAC-02",
+      "title": "Consider an air-delivery limitation",
+      "guidance": "Reported low airflow, fan alarms or filter differential-pressure evidence can justify further airflow investigation. Without such evidence, treat this only as an unconfirmed possibility and request readings. Compare against an approved site reference, never an assumed threshold.",
+      "actionIds": ["check-airflow", "request-inspection"]
+    },
+    {
+      "id": "HVAC-03",
+      "title": "Consider cooling or control response",
+      "guidance": "Reported warm supply air and control or valve readings can justify a qualified cooling-system investigation. A valve command does not prove actual valve position or water flow. Preserve contradictory evidence and do not diagnose a component from one reading.",
+      "actionIds": ["check-trends", "request-inspection"]
+    }
+  ],
+  "actions": [
+    { "id": "check-readings", "title": "Verify available temperature readings", "instruction": "Record the existing room and supply-air readings, their timestamps and the reported setpoint. Flag missing or inconsistent readings.", "requiresApproval": false, "owner": "Operations staff", "ruleIds": ["HVAC-01"] },
+    { "id": "check-trends", "title": "Review existing BMS trends", "instruction": "Review available alarms and temperature/control trends for the incident period using authorized read-only access. Record gaps without changing settings.", "requiresApproval": false, "owner": "Authorized BMS operator", "ruleIds": ["HVAC-01", "HVAC-03"] },
+    { "id": "check-airflow", "title": "Collect available airflow evidence", "instruction": "Record available airflow, fan status and filter differential-pressure readings with the approved site reference where available. Do not assume a normal range.", "requiresApproval": false, "owner": "Operations staff", "ruleIds": ["HVAC-02"] },
+    { "id": "request-inspection", "title": "Request a qualified engineering inspection", "instruction": "Ask the responsible engineer to determine whether an onsite inspection is appropriate under the site's approved procedure. No equipment operation is authorized by this report.", "requiresApproval": true, "owner": "Responsible engineer", "ruleIds": ["HVAC-02", "HVAC-03"] }
+  ],
+  "boundaries": [
+    "Advisory output only; the application does not operate equipment or issue work orders.",
+    "No automatic resets, isolation, setpoint changes, valve commands or bypass of interlocks.",
+    "All conclusions are hypotheses for human verification, not confirmed diagnoses.",
+    "The user's priority is retained. Any suggested change requires a human decision."
+  ],
+  "escalationConditions": [
+    "If the operator reports immediate danger or another safety concern, follow the site's emergency escalation procedure instead of relying on this demo.",
+    "If facts conflict, the fault falls outside AHU cooling scope, or essential evidence cannot be verified, refer to the responsible engineer."
+  ]
+}

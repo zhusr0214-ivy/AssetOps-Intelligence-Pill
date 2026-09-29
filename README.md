@@ -47,9 +47,48 @@ Then open `http://localhost:5173`.
 - Drafts require a description. Confirmation also requires location, priority, start time and impact. Unknown is accepted for start time and impact. Asset and readings are optional.
 - Saving edits returns a case to draft/needs-information. Confirm again to mark it ready for triage.
 
-The backend Intake Agent connects to SOCLAAS through its OpenAI-compatible Chat Completions endpoint. `intake-agent.js` contains the prompts, provider call, validation and field merge. Users answer questions in the case conversation; each request includes saved conversation context and current fields. Extracted facts must occur in user messages. Explicit corrections can update AI-extracted fields; disagreements and changes to manually edited fields require confirmation in the summary. Priority remains user-selected. `intake.js` owns required-field checks; `conversation.js` handles saved messages, follow-up wording and retry behavior. Other sections remain scaffolds; confirming intake does not run triage.
+The backend Intake Agent connects to SOCLAAS through its OpenAI-compatible Chat Completions endpoint. `intake-agent.js` contains the prompts, provider call, validation and field merge. Users answer questions in the case conversation; each request includes saved conversation context and current fields. Extracted facts must occur in user messages. Explicit corrections can update AI-extracted fields; disagreements and changes to manually edited fields require confirmation in the summary. Priority remains user-selected. `intake.js` owns required-field checks; `conversation.js` handles saved messages, follow-up wording and retry behavior. Confirming intake exposes the AI Triage entry point; analysis starts only when requested. Human review and the other unfinished sections remain scaffolds.
 
 The summary stays editable through Edit summary. Sending a message or saving a field persists changes. A failed model call retains the user message and offers Retry analysis; the same request ID cannot append the message twice. Unsent text and unsaved summary edits are not persisted across a page reload. Existing cases without conversation history remain readable and can start a conversation. Older nonempty fields are treated as manually supplied. Case details include saved conversation history.
+
+## AI Triage MVP
+
+- `/triage`: confirmed cases and analysis history, with search and report-status filtering.
+- `/triage/:id`: run analysis, inspect hypotheses with quoted case evidence, view catalog-based checks, Pill references, priority suggestions and operating boundaries.
+- The current report also includes an `Ask about this analysis` conversation. It explains evidence and rules using the saved report context; it cannot edit the Case, change Priority or execute actions.
+- `triage-agent.js`: Domain Triage prompt and SOCLAAS model adapter. It uses the existing backend environment variables.
+- `triage.js`: scope matching, case snapshots, deterministic validation and report orchestration.
+- `pills/ahu-cooling.json`: versioned, illustrative AHU cooling knowledge. It is explicitly **demo-only**, project-authored and not approved engineering advice. Review it with a domain expert before operational use.
+
+Supported: `hvac_cooling`, or general `hvac` with an AHU asset identifier. Other categories return an explicit out-of-scope report without calling a model. An unconfirmed AHU or missing observations produces information requests. All cases must have confirmed intake, with no unresolved conflicts or messages.
+
+The model proposes hypotheses and selects rule/action IDs. The backend verifies that rule IDs exist, quoted evidence occurs in the case, and actions belong to cited rules. Action instructions and approval requirements come from the Pill catalog, never model-supplied text. These checks do not verify the semantic correctness of a diagnosis. No equipment commands, work orders, approval actions, human-review endpoints or autonomous execution are implemented. Priority suggestions never modify the user's priority.
+
+Each completed attempt (including failures) is appended to `triageReports` on the incident in the existing local data file. Reports retain the input snapshot, Pill contents/version, configured model name, prompt version, timestamps and rule-check results. Changed case facts or unconfirmed intake make old reports stale. Concurrent case edits are preserved. Only one run per case is permitted per server process. Running requests survive browser navigation but are not durable jobs: restarting the server interrupts an in-flight run; retry afterward. Earlier saved reports remain intact.
+
+| Method | Route | Purpose |
+| --- | --- | --- |
+| GET | `/api/triage` | Cases with triage eligibility and latest report |
+| GET | `/api/triage/:id` | Current case, reports and running state |
+| POST | `/api/triage/:id/runs` | Analyze the case; body is `{ "revision": 3 }` using its current revision |
+| POST | `/api/triage/:id/reports/:reportId/chat` | Ask a question about a saved, non-stale report |
+
+Run requests return a saved `report` with status `complete`, `needs_information`, `out_of_scope` or `failed`. Model failures are recorded as failed reports rather than erasing earlier results. Precondition errors return 409. The request may take up to 30 seconds for the model. No model request is silently replaced with a mock response.
+
+Optional live test (sends only a synthetic case and consumes provider quota):
+
+```bash
+npm run check:triage
+```
+
+If the provider still omits intermediate certificates, use the previously verified local chain for both the server and live check:
+
+```bash
+NODE_EXTRA_CA_CERTS="/Users/ivychu/Documents/Codex/soclaas-ca-chain.pem" npm run dev
+NODE_EXTRA_CA_CERTS="/Users/ivychu/Documents/Codex/soclaas-ca-chain.pem" npm run check:triage
+```
+
+That path is local to this machine; other developers must obtain a verified certificate chain or wait for the provider's certificate configuration to be corrected. Normal tests are offline and use mocked provider responses. `.env` and saved case data are not changed by the tests.
 
 ## Model Configuration
 

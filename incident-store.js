@@ -29,6 +29,26 @@ export function createIncidentStore(file) {
   }
   return {
     async list() { await queue; return read(); },
+    appendTriageReport(id, report) {
+      return mutate(records => {
+        const record = records.find(item => item.id === id);
+        if (!record) throw Object.assign(new Error('Incident not found.'), { status: 404 });
+        record.triageReports = [...(record.triageReports || []), report];
+        record.revision = (record.revision || 0) + 1;
+        record.updatedAt = new Date().toISOString();
+        return record;
+      });
+    },
+    appendTriageMessage(id, reportId, message) {
+      return mutate(records => {
+        const record = records.find(item => item.id === id);
+        const report = record?.triageReports?.find(item => item.id === reportId);
+        if (!report) throw Object.assign(new Error('Triage report not found.'), { status: 404 });
+        report.chat = [...(report.chat || []), message];
+        record.updatedAt = new Date().toISOString();
+        return record;
+      });
+    },
     create(data) {
       return mutate(records => {
         const now = new Date().toISOString();

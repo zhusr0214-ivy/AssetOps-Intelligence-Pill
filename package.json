@@ -7,7 +7,8 @@
     "dev": "node server.js",
     "start": "node server.js",
     "test": "node --test",
-    "check:llm": "node scripts/check-llm.js"
+    "check:llm": "node scripts/check-llm.js",
+    "check:triage": "node scripts/check-triage.js"
   },
   "engines": {
     "node": ">=20.12"

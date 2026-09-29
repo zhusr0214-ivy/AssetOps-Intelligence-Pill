@@ -104,5 +104,5 @@ function renderDetail(view, incident) {
     <div class="detail-meta">${badge('status', incident.status, statuses[incident.status])}${badge('priority', incident.priority, priorities[incident.priority])}<span>Updated ${e(new Date(incident.updatedAt).toLocaleString())}</span></div>
     ${details(incident)}
     ${incident.messages?.length ? `<details class="conversation-history"><summary>Conversation history (${incident.messages.length})</summary>${incident.messages.map(message => `<article class="message ${message.role === 'user' ? 'user' : 'assistant'}"><strong>${message.role === 'user' ? 'You' : 'Intake assistant'}</strong><p>${e(message.content)}</p></article>`).join('')}</details>` : ''}
-    ${incident.status === 'ready_for_triage' ? '<p class="notice">Intake confirmed. Awaiting triage.</p>' : `<div class="form-actions"><a class="button primary" href="/incidents/${e(incident.id)}/edit">Continue intake</a></div>`}`;
+    ${incident.status === 'ready_for_triage' ? `<div class="form-actions"><a class="button primary" href="/triage/${e(incident.id)}">Open AI Triage</a></div>` : `<div class="form-actions"><a class="button primary" href="/incidents/${e(incident.id)}/edit">Continue intake</a>${incident.triageReports?.length ? `<a class="button" href="/triage/${e(incident.id)}">View previous analyses</a>` : ''}</div>`}`;
 }

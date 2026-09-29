@@ -7,6 +7,7 @@ import { createIncidentStore } from './incident-store.js';
 import { createIntakeAgent } from './intake-agent.js';
 import { loadLocalEnv } from './config.js';
 import { sendMessage, manualFieldsFor } from './conversation.js';
+import { createTriageService, ahuPill } from './triage.js';
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const publicDir = join(__dirname, "public");
@@ -27,7 +28,7 @@ const modules = [
   {
     id: "triage",
     title: "AI Triage Workspace",
-    summary: "A placeholder for Pill-powered incident interpretation and recommendation."
+    summary: "Case analysis, supporting evidence and Pill-based recommendations."
   },
   {
     id: "review",
@@ -53,7 +54,7 @@ const apiRoutes = {
   "/api/triage": { module: modules[2] },
   "/api/review": { module: modules[3] },
   "/api/learning": { module: modules[4] },
-  "/api/governance": { module: modules[5] }
+  "/api/governance": { module: modules[5], pills: [ahuPill] }
 };
 
 const contentTypes = {
@@ -106,12 +107,28 @@ async function readBody(req) {
   catch { throw Object.assign(new Error('Invalid JSON body.'), { status: 400 }); }
 }
 
-export function createHandler(store = createIncidentStore(process.env.DATA_FILE || join(__dirname, 'data/incidents.json')), intakeAgent = createIntakeAgent()) {
+export function createHandler(store = createIncidentStore(process.env.DATA_FILE || join(__dirname, 'data/incidents.json')), intakeAgent = createIntakeAgent(), triageAgent) {
  const busyCases = new Set();
+ const triage = createTriageService(store, triageAgent);
  return async (req, res) => {
  try {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const path = url.pathname;
+  if (path === '/api/triage' && req.method === 'GET') return sendJson(res, 200, { cases: await triage.list() });
+  const triageMatch = path.match(/^\/api\/triage\/([^/]+)(\/runs)?$/);
+  if (triageMatch) {
+    if (req.method === 'GET' && !triageMatch[2]) return sendJson(res, 200, await triage.get(triageMatch[1]));
+    if (req.method === 'POST' && triageMatch[2]) {
+      const body = await readBody(req);
+      return sendJson(res, 200, { report: await triage.run(triageMatch[1], body?.revision) });
+    }
+    return sendJson(res, 405, { error: 'Method not allowed.' });
+  }
+  const chatMatch = path.match(/^\/api\/triage\/([^/]+)\/reports\/([^/]+)\/chat$/);
+  if (chatMatch && req.method === 'POST') {
+    const body = await readBody(req);
+    return sendJson(res, 200, { report: await triage.chat(chatMatch[1], chatMatch[2], body?.question) });
+  }
   if (path === '/api/intake/analyze' && req.method === 'POST') {
     return sendJson(res, 200, await intakeAgent(await readBody(req)));
   }
