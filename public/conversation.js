@@ -28,7 +28,7 @@ export function renderConversation(view, initial, navigate) {
   function paint() {
     const waiting = pending();
     const complete = missing().length === 0 && !incident.conflicts?.length && !waiting && !Object.keys(summaryDraft).length;
-    view.innerHTML = `<a class="back-link" href="/incidents">Back to incidents</a>
+    view.innerHTML = `<a class="back-link" href="/incidents"><span class="back-arrow" aria-hidden="true">&larr;</span>Back to incidents</a>
       <header class="workspace-heading"><div><p class="eyebrow">${e(incident.id || 'Case intake')}</p><h2>${incident.id ? 'Incident intake' : 'New incident'}</h2></div><span class="save-status" role="status">${e(notice)}</span></header>
       <p class="form-error" role="alert" ${errorText ? '' : 'hidden'}>${e(errorText)}</p>
       <div class="conversation-layout" aria-busy="${busy}">

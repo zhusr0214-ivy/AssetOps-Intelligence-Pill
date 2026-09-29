@@ -329,7 +329,11 @@ button:disabled { opacity: .5; cursor: default; }
 .incident-workspace label { display: grid; align-content: start; gap: 8px; font-size: 13px; font-weight: 600; min-width: 0; }
 .incident-workspace input, .incident-workspace select, .incident-workspace textarea { width: 100%; min-width: 0; padding: 10px 11px; border: 1px solid #bcc8d2; border-radius: 5px; background: white; color: var(--ink); font-size: 14px; }
 .incident-workspace textarea { resize: vertical; min-height: 76px; line-height: 1.6; }
-.result-count, .list-footer, .detail-meta, .back-link { font-size: 13px; color: #536174; }
+.result-count, .list-footer, .detail-meta { font-size: 13px; color: #536174; }
+.back-link { display: inline-flex; align-items: center; gap: 10px; min-height: 44px; max-width: 100%; padding: 10px 16px; margin-bottom: 8px; border: 1px solid #087b74; border-radius: 6px; background: #e6f4ef; color: #065d58; font-size: 14px; font-weight: 700; line-height: 1.4; text-decoration: none; }
+.back-link:hover { background: #d1eae1; border-color: #065d58; }
+.back-link:active { background: #beded2; }
+.back-arrow { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 22px; width: 22px; height: 22px; font-size: 24px; font-weight: 400; line-height: 1; }
 .result-count { margin: 18px 0 12px; }
 .table-scroll { overflow-x: auto; background: white; border-block: 1px solid var(--line); }
 .incident-table { width: 100%; min-width: 760px; border-collapse: collapse; text-align: left; table-layout: fixed; font-size: 14px; }

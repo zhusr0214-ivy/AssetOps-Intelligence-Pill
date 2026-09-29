@@ -40,7 +40,7 @@ export async function renderIncidents(root, pathname, navigate) {
       else renderDetail(view, incident);
     }
   } catch (error) {
-    if (view.isConnected) view.innerHTML = `<a href="/incidents">Back to incidents</a><p class="form-error" role="alert">${e(error.message)}</p>`;
+    if (view.isConnected) view.innerHTML = `<a class="back-link" href="/incidents"><span class="back-arrow" aria-hidden="true">&larr;</span>Back to incidents</a><p class="form-error" role="alert">${e(error.message)}</p>`;
   }
 }
 
@@ -95,7 +95,7 @@ export function details(incident) {
 }
 
 function renderDetail(view, incident) {
-  view.innerHTML = `<a href="/incidents" class="back-link">Back to incidents</a>
+  view.innerHTML = `<a href="/incidents" class="back-link"><span class="back-arrow" aria-hidden="true">&larr;</span>Back to incidents</a>
     <header class="workspace-heading"><div><p class="eyebrow">${e(incident.id)}</p><h2>${e(incident.title)}</h2></div><a href="/incidents/${e(incident.id)}/edit" class="button">Edit incident</a></header>
     <div class="detail-meta">${badge('status', incident.status, statuses[incident.status])}${badge('priority', incident.priority, priorities[incident.priority])}<span>Updated ${e(new Date(incident.updatedAt).toLocaleString())}</span></div>
     ${details(incident)}
