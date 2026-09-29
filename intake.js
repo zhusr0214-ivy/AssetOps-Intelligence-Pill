@@ -71,9 +71,11 @@ const domainQuestions = [
     covered: /breaker.*(?:tripped|trip)|\u65ad\u8def\u5668.*\u8df3\u95f8/i },
   { id: 'hvac_scope', categories: ['hvac', 'hvac_cooling', 'hvac_local_comfort'], field: 'affectedScope',
     question: 'Is the issue limited to one room or zone, or are multiple areas affected?',
+    shortAnswer: /^(?:(?:just |only )?(?:one|a single|multiple|several) (?:room|zone|area)s?|\u53ea\u6709\u4e00\u4e2a(?:\u623f\u95f4|\u533a\u57df)|\u591a\u4e2a(?:\u623f\u95f4|\u533a\u57df))[.!\u3002]?$/i,
     covered: /(?:limited|confined) to|multiple (?:areas|zones).*affected|affects the east|nearby offices (?:appear |are )?normal|\u4ec5\u9650|\u591a\u4e2a\u533a\u57df.*\u53d7\u5f71\u54cd|\u9644\u8fd1\u529e\u516c\u5ba4.*\u6b63\u5e38|\u4e1c\u533a.*\u897f\u533a/i },
   { id: 'hvac_local_airflow', categories: ['hvac_local_comfort'], field: 'observations',
     question: 'What is the local VAV response and measured airflow, if known?',
+    shortAnswer: /^(?:\d+(?:\.\d+)?\s*%\s*[,;\uFF0C/]\s*)?\d+(?:\.\d+)?\s*(?:m(?:3|\u00b3|\^3)\s*\/\s*[hs]|l\s*\/\s*s|cfm|\u7acb\u65b9\u7c73\s*\/\s*\u5c0f\u65f6)[.!\u3002]?$/i,
     covered: /VAV.*(?:command|response|position)|measured airflow|VAV.*(?:\u5f00\u5ea6|\u6307\u4ee4|\u54cd\u5e94)|\u5b9e\u6d4b\u98ce\u91cf/i },
   { id: 'hvac_filter_dp', categories: ['hvac_cooling'], field: 'observations',
     question: 'What is the filter differential pressure reading and its normal reference range, if known?',
@@ -91,6 +93,7 @@ function questionAnswer(messages, question) {
     if (/^(?:unknown|not sure|(?:i )?don['’]?t know|\u4e0d\u77e5\u9053|\u4e0d\u6e05\u695a|\u672a\u77e5)[.!。]?$/i.test(answer)) lastAnswer = 'unknown';
     else if (question.binary && /^(?:yes|no|\u662f|\u4e0d\u662f|\u6709|\u6ca1\u6709|\u6ca1\u6709\u4e86)[.!。]?$/i.test(answer)) lastAnswer = answer;
     else if (question.covered.test(answer)) lastAnswer = 'answered';
+    else if (question.shortAnswer?.test(answer)) lastAnswer = 'answered';
     else if (question.id === 'hvac_filter_dp' && /^\d+(?:\.\d+)?\s*(?:Pa|kPa|\u5e15)[.!。]?$/i.test(answer)) lastAnswer = 'answered';
     else if (question.id === 'lift_fault_code' && /^(?:none|no code|\u6ca1\u6709|\u65e0|[A-Z]+[- ]?\d+)[.!。]?$/i.test(answer)) lastAnswer = 'answered';
   }

@@ -73,6 +73,12 @@ This optional live check lists models and submits one synthetic incident to the 
 
 Request format reference: [OpenAI Chat Completions documentation](https://platform.openai.com/docs/api-reference/chat/create). Provider compatibility is checked against SOCLAAS directly.
 
+The live check accepts both the general `hvac` and specific `hvac_cooling` classifications for its synthetic cooling incident. A TLS certificate error is distinct from an invalid API key: verify the provider certificate chain or use an approved organizational CA. Do not disable TLS verification.
+
+## Contextual Follow-ups
+
+Intake distinguishes cooling performance, local thermal comfort, water leaks, electrical distribution and lift faults. It accumulates observations, completed actions and affected scope across turns; conflicting evidence remains subject to human confirmation. Short readings such as `50%, 120 m3/h` and scope replies such as `One room` are recognized when answering the matching question, without treating unrelated replies as diagnostic evidence.
+
 ## Incident API
 
 | Method | Route | Purpose |

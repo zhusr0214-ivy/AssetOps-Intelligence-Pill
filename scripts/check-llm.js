@@ -1,7 +1,17 @@
 import assert from 'node:assert/strict';
 import { loadLocalEnv } from '../config.js';
 import { createIntakeAgent } from '../intake-agent.js';
+import { fileURLToPath } from 'node:url';
 
+export function assertLiveIntakeResult(result) {
+  assert.equal(result.mode, 'llm');
+  assert.equal(result.fields.priority, 'high');
+  assert.equal(result.fields.asset, 'AHU-18-01');
+  assert.ok(['hvac', 'hvac_cooling'].includes(result.fields.category), 'Expected an HVAC cooling classification.');
+  assert.equal(result.readyForTriage, true);
+}
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
 loadLocalEnv();
 try {
   const base = process.env.SOCLAAS_BASE_URL?.replace(/\/+$/, '');
@@ -17,14 +27,12 @@ try {
     description: 'Synthetic test: AHU-18-01 at Tower A floor 18 has not been cooling since 2pm today. Three tenants report discomfort. Room temperature is 29 C. No action has been taken.',
     priority: 'high'
   });
-  assert.equal(result.mode, 'llm');
-  assert.equal(result.fields.priority, 'high');
-  assert.equal(result.fields.asset, 'AHU-18-01');
-  assert.equal(result.fields.category, 'hvac');
-  assert.equal(result.readyForTriage, true);
+  assertLiveIntakeResult(result);
   console.log('Live intake passed: extraction, required fields and user priority verified.');
 } catch (error) {
   // Never print upstream response bodies, request headers or credentials.
-  console.error(error.name === 'AssertionError' ? 'Live intake returned unexpected extracted fields.' : error.status ? error.message : 'Connection check failed. Verify credentials, URL and network access.');
+  const certificateError = ['UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'UNABLE_TO_GET_ISSUER_CERT_LOCALLY', 'CERT_HAS_EXPIRED', 'SELF_SIGNED_CERT_IN_CHAIN'].includes(error.cause?.code);
+  console.error(certificateError ? 'TLS certificate verification failed. Check the provider certificate chain or your approved network CA; do not disable certificate verification.' : error.name === 'AssertionError' ? 'Live intake returned unexpected extracted fields.' : error.status ? error.message : 'Connection check failed. Verify credentials, URL and network access.');
   process.exitCode = 1;
+}
 }
