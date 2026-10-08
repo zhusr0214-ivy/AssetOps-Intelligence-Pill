@@ -32,7 +32,7 @@ test('triage API persists a grounded report and retains user priority', async t 
   const { store, incident, file } = await setup(t);
   const handler = createHandler(store, undefined, async (snapshot, pill) => {
     assert.equal(snapshot.fields.priority, 'high');
-    assert.equal(pill.version, '0.1.0-demo');
+    assert.equal(pill.version, '0.1.1-demo');
     return proposal();
   });
   assert.equal((await request(handler, 'GET', '/api/triage')).cases.length, 1);
@@ -45,7 +45,7 @@ test('triage API persists a grounded report and retains user priority', async t 
   const saved = await request(createHandler(createIncidentStore(file)), 'GET', `/api/triage/${incident.id}`);
   assert.equal(saved.incident.priority, 'high');
   assert.equal(saved.reports.length, 1);
-  assert.equal(saved.reports[0].pill.version, '0.1.0-demo');
+  assert.equal(saved.reports[0].pill.version, '0.1.1-demo');
   assert.equal((await request(handler, 'POST', `/api/triage/${incident.id}/runs`, { revision: 0 })).status, 409);
   assert.equal((await request(handler, 'GET', '/api/triage/missing')).status, 404);
   assert.equal((await request(handler, 'DELETE', `/api/triage/${incident.id}`)).status, 405);

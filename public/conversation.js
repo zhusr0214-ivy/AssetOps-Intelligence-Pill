@@ -5,6 +5,13 @@ export function visibleAssistantText(message, incident) {
   return message.content.replace(/Please choose Priority in the summary\.|\u8bf7\u5728\u6458\u8981\u4e2d\u9009\u62e9 Priority。/g, '').trim();
 }
 
+
+export function recentMessages(incident) {
+  const messages = incident.messages || [];
+  const render = items => items.map(message => `<article class="message ${message.role === 'user' ? 'user' : 'assistant'}"><strong>${message.role === 'user' ? 'You' : 'Intake assistant'}</strong><p>${e(visibleAssistantText(message, incident))}</p>${message.state && message.state !== 'complete' ? `<small>${message.state === 'failed' ? 'Analysis failed. Message saved.' : 'Awaiting analysis'}</small>` : ''}</article>`).join('');
+  return `${messages.length > 4 ? `<details class="conversation-history"><summary>Earlier messages (${messages.length - 4})</summary>${render(messages.slice(0, -4))}</details>` : ''}${render(messages.slice(-4))}`;
+}
+
 export function renderConversation(view, initial, navigate) {
   let incident = initial;
   let draftText = '';
@@ -36,16 +43,16 @@ export function renderConversation(view, initial, navigate) {
     view.innerHTML = `<a class="back-link" href="/incidents"><span class="back-arrow" aria-hidden="true">&larr;</span>Back to incidents</a>
       <header class="workspace-heading"><div><p class="eyebrow">${e(incident.id || 'Case intake')}</p><h2>${incident.id ? 'Incident intake' : 'New incident'}</h2></div><span class="save-status" role="status">${e(notice)}</span></header>
       <p class="form-error" role="alert" ${errorText ? '' : 'hidden'}>${e(errorText)}</p>
-      <div class="conversation-layout" aria-busy="${busy}">
+      <nav class="section-jumps" aria-label="Intake sections"><a href="#message-form">Write a message</a><a href="#case-summary">Case summary / confirm</a></nav><div class="conversation-layout" aria-busy="${busy}">
         <section class="conversation-main" aria-label="Incident conversation"><h3>Conversation</h3>
           <div class="message-log" role="log" aria-label="Case messages">
             <article class="message assistant"><strong>Intake assistant</strong><p>Please describe the incident, including its location, symptoms, and any known readings or actions already taken.</p></article>
-            ${(incident.messages || []).map(message => `<article class="message ${message.role === 'user' ? 'user' : 'assistant'}"><strong>${message.role === 'user' ? 'You' : 'Intake assistant'}</strong><p>${e(visibleAssistantText(message, incident))}</p>${message.state && message.state !== 'complete' ? `<small>${message.state === 'failed' ? 'Analysis failed. Message saved.' : 'Awaiting analysis'}</small>` : ''}</article>`).join('')}
+            ${recentMessages(incident)}
           </div>
           ${waiting ? `<div class="retry-row"><span>Message saved. ${busy ? 'Analyzing...' : 'Analysis incomplete.'}</span><button type="button" id="retry-message" ${busy ? 'disabled' : ''}>Retry analysis</button></div>` : ''}
           <form id="message-form" class="message-composer"><label for="case-message">Message<textarea id="case-message" maxlength="6000" rows="3" required ${busy || waiting ? 'disabled' : ''} placeholder="Describe the issue or add an update">${e(draftText)}</textarea></label><div class="actions"><button class="primary" type="submit" ${busy || waiting ? 'disabled' : ''}>Send message</button></div></form>
         </section>
-        <aside class="case-summary" aria-label="Incident summary"><h3>Case summary</h3>
+        <aside id="case-summary" class="case-summary" aria-label="Incident summary"><h3>Case summary</h3>
           <label for="case-priority">Priority<select id="case-priority" ${busy ? 'disabled' : ''}>${options(priorities, incident.priority, 'Select priority')}</select></label>
           ${(incident.conflicts || []).map((item, index) => `<div class="field-conflict"><strong>Confirm ${e(labels[item.field])}</strong><p>Current: ${e(item.current || 'Not provided')}<br>New: ${e(item.proposed)}</p><div class="actions"><button data-conflict="${index}" data-choice="current" ${busy ? 'disabled' : ''}>Keep current</button><button data-conflict="${index}" data-choice="proposed" ${busy ? 'disabled' : ''}>Use new value</button></div></div>`).join('')}
           ${details(incident)}
@@ -100,8 +107,7 @@ export function renderConversation(view, initial, navigate) {
       await api(`/api/incidents/${incident.id}/finalize`, { method: 'POST', body: JSON.stringify({ revision: incident.revision || 0 }) });
       if (view.isConnected) navigate(`/incidents/${incident.id}`);
     }, 'Submitting...');
-    const log = view.querySelector('.message-log');
-    log.scrollTop = log.scrollHeight;
+
   }
   paint();
 }

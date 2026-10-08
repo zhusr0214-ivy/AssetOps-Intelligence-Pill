@@ -1,7 +1,7 @@
 {
   "id": "assetops-ahu-cooling",
   "name": "AHU Cooling Performance",
-  "version": "0.1.0-demo",
+  "version": "0.1.1-demo",
   "status": "demo",
   "owner": "AssetOps project team",
   "source": "Illustrative project-authored rules. Not a validated engineering SOP.",
@@ -10,18 +10,21 @@
     {
       "id": "HVAC-01",
       "title": "Verify the reported cooling condition",
+      "cardExplanation": "Review the reported room temperature, supply-air temperature, setpoint and timestamps together. These readings alone do not establish cooling adequacy or identify a failed component; interpretation requires relevant site criteria and operating context.",
       "guidance": "Compare reported room and supply-air readings with the stated setpoint and timestamps. A warm room alone does not establish a failed component. Do not invent normal ranges or measurements.",
       "actionIds": ["check-readings", "check-trends"]
     },
     {
       "id": "HVAC-02",
       "title": "Consider an air-delivery limitation",
+      "cardExplanation": "Airflow measurements, fan status and filter differential pressure can help assess a possible air-delivery limitation. A running fan does not establish adequate airflow, and differential pressure should be compared with the approved site reference before drawing conclusions.",
       "guidance": "Reported low airflow, fan alarms or filter differential-pressure evidence can justify further airflow investigation. Without such evidence, treat this only as an unconfirmed possibility and request readings. Compare against an approved site reference, never an assumed threshold.",
       "actionIds": ["check-airflow", "request-inspection"]
     },
     {
       "id": "HVAC-03",
       "title": "Consider cooling or control response",
+      "cardExplanation": "Temperature readings and control signals can inform a review of cooling-system response. A valve command does not establish actual valve position or chilled-water flow; any conclusion about these requires separate reported evidence.",
       "guidance": "Reported warm supply air and control or valve readings can justify a qualified cooling-system investigation. A valve command does not prove actual valve position or water flow. Preserve contradictory evidence and do not diagnose a component from one reading.",
       "actionIds": ["check-trends", "request-inspection"]
     }
