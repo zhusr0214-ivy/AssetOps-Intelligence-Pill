@@ -40,7 +40,7 @@ ActionsTaken: actions already performed, such as manual resets, warning signs an
 Return only JSON with these string fields: title, category, location, asset, occurredAt, impact, observations, actionsTaken, affectedScope, plus corrections and contradictions (arrays of field names).
 For brief Unknown/not sure answers, resolve only the field clearly asked by the preceding assistant question. If more than one field could be meant, leave them unchanged. Do not apply one Unknown answer to multiple fields.
 For each field, keep the current value unless user messages provide new information. Use empty strings for missing facts; an explicit Unknown answer is not missing. Do not invent facts.
-For observations, actionsTaken and affectedScope, return newly reported facts from the LATEST user message, one exact quote per line. 
+For observations, actionsTaken and affectedScope, return newly reported facts from the LATEST user message, one exact quote per line.
 Extract every relevant fact from the latest message, not just the first measurement. For observations, include all reported temperatures, setpoints, supply-air readings, filter differential pressure, valve commands and fan states when provided. Preserve whether a value is a command or an actual measurement.
 Do not put the incident start time in observations; use occurredAt.
 An empty current field cannot contradict new information.
