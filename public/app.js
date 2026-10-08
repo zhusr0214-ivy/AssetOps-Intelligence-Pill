@@ -1,3 +1,5 @@
+import { jumpToSection } from './navigation.js';
+import { renderLibrary } from './library.js';
 import { renderIncidents, escapeHtml } from './incidents.js';
 import { renderTriage } from './triage.js';
 
@@ -35,8 +37,7 @@ async function renderGovernance() {
   const response = await fetch('/api/governance');
   if (!response.ok) throw new Error('Unable to load Pill library');
   const { pills } = await response.json();
-  pageRoot.innerHTML = `<section class="governance-page"><header class="workspace-heading"><div><p class="eyebrow">Knowledge governance</p><h2>Pill Governance Library</h2></div><span class="badge status-draft">${pills.length} Pill${pills.length === 1 ? '' : 's'}</span></header>
-    <div class="pill-library">${pills.map(pill => `<article class="pill-record"><header class="pill-header"><div><p class="eyebrow">${escapeHtml(pill.id)}</p><h3>${escapeHtml(pill.name)}</h3></div><span class="badge">${escapeHtml(pill.status)} · v${escapeHtml(pill.version)}</span></header><p class="pill-source">${escapeHtml(pill.source)}</p><dl class="pill-meta"><div><dt>Owner</dt><dd>${escapeHtml(pill.owner)}</dd></div><div><dt>Scope</dt><dd>${escapeHtml(pill.scope)}</dd></div></dl><section class="pill-section"><h4>Decision rules</h4>${pill.rules.map(rule => `<div class="pill-rule"><strong>${escapeHtml(rule.id)} · ${escapeHtml(rule.title)}</strong><p>${escapeHtml(rule.guidance)}</p><small>Actions: ${rule.actionIds.map(escapeHtml).join(', ')}</small></div>`).join('')}</section><section class="pill-section"><h4>Action catalog</h4><div class="pill-actions">${pill.actions.map(action => `<div class="pill-action"><strong>${escapeHtml(action.title)}</strong><span class="badge">${action.requiresApproval ? 'Human approval required' : 'Read-only check'}</span><p>${escapeHtml(action.instruction)}</p><small>${escapeHtml(action.owner)} · ${action.ruleIds.map(escapeHtml).join(', ')}</small></div>`).join('')}</div></section><div class="pill-columns"><section class="pill-section"><h4>Boundaries</h4><ul>${pill.boundaries.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul></section><section class="pill-section"><h4>Escalation</h4><ul>${pill.escalationConditions.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul></section></div><footer class="pill-footer">Demo status: this Pill is project-authored and requires domain validation before operational use.</footer></article>`).join('')}</div></section>`;
+  renderLibrary(pageRoot, pills);
 }
 
 function renderNav(modules) {
@@ -111,6 +112,7 @@ function setActiveNav(activeId) {
 }
 
 function renderRoute(modules) {
+  window.scrollTo({ top: 0, behavior: 'instant' });
   const pathname = window.location.pathname;
   const activeId = pathname.startsWith('/triage/') ? 'triage' : pathname.startsWith('/incidents/') ? 'incidents' : routeMap[pathname] || "dashboard";
   const activeModule = modules.find((module) => module.id === activeId) || modules[0];
@@ -145,6 +147,7 @@ function renderRoute(modules) {
 
 function bindNavigation(modules) {
   document.addEventListener("click", (event) => {
+    if (jumpToSection(event, document)) return;
     const link = event.target.closest("a[href^='/']");
     if (!link || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || link.target || link.download) return;
 
@@ -166,6 +169,11 @@ function renderError(message) {
 }
 
 function renderSite(modules) {
+  const top = document.createElement('button');
+  top.className = 'page-top'; top.textContent = '↑ Back to top'; top.hidden = true;
+  top.onclick = () => window.scrollTo({ top: 0, behavior: 'instant' });
+  document.body.append(top);
+  window.addEventListener('scroll', () => { top.hidden = window.scrollY < 500; }, { passive: true });
   renderNav(modules);
   bindNavigation(modules);
   renderRoute(modules);

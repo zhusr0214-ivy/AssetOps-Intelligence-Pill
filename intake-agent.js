@@ -40,7 +40,13 @@ ActionsTaken: actions already performed, such as manual resets, warning signs an
 Return only JSON with these string fields: title, category, location, asset, occurredAt, impact, observations, actionsTaken, affectedScope, plus corrections and contradictions (arrays of field names).
 For brief Unknown/not sure answers, resolve only the field clearly asked by the preceding assistant question. If more than one field could be meant, leave them unchanged. Do not apply one Unknown answer to multiple fields.
 For each field, keep the current value unless user messages provide new information. Use empty strings for missing facts; an explicit Unknown answer is not missing. Do not invent facts.
-For observations, actionsTaken and affectedScope, return newly reported facts from the LATEST user message, one exact quote per line. The application appends compatible facts and keeps earlier evidence.
+For observations, actionsTaken and affectedScope, return newly reported facts from the LATEST user message, one exact quote per line. 
+Extract every relevant fact from the latest message, not just the first measurement. For observations, include all reported temperatures, setpoints, supply-air readings, filter differential pressure, valve commands and fan states when provided. Preserve whether a value is a command or an actual measurement.
+Do not put the incident start time in observations; use occurredAt.
+An empty current field cannot contradict new information.
+A general symptom and a supporting measurement are compatible: "not cooling adequately" and "room temperature is 28.4°C" are not contradictory.
+Use contradictions only for incompatible claims about the same property, equipment and time. New detail alone is not a contradiction.
+The application appends compatible facts and keeps earlier evidence.
 If observations, actionsTaken or affectedScope are explicitly corrected or contradict the current facts, return the complete proposed field, keeping unrelated valid facts, and mark the field in corrections or contradictions for human confirmation.
 contradictions contains fields whose new facts conflict with the same object and time in the current summary. Do not mark compatible additions as contradictions. Never silently combine mutually exclusive claims.
 Keep completed actions as history. A later action does not erase an earlier action. Do not put an old fact into corrections merely because it was not mentioned again.
@@ -62,6 +68,17 @@ Do not output priority, description, status, recommendations, diagnosis or actio
 const isUnknown = value => /^(?:unknown|not sure|(?:i )?don['’]?t know|\u4e0d\u77e5\u9053|\u4e0d\u6e05\u695a|\u672a\u77e5)[.!。]?$/i.test(value.trim());
 
 function unknownTarget(messages, latest) {
+  // Recognize an explicit unknown start time within a longer message.
+  const sentences = latest.split(/[.!?。！？\r\n]+/);
+
+  const explicitUnknownStart = sentences.some(sentence =>
+    /^(?:the\s+)?(?:start time|started at|occurred at)\s*(?::|is)\s*(?:unknown|not sure|not known)\s*$/i
+      .test(sentence.trim())
+  );
+
+  if (explicitUnknownStart) {
+    return 'occurredAt';
+  }
   const explicit = latest.match(/^(?:started at|start time|occurred at|\u5f00\u59cb\u65f6\u95f4|\u53d1\u751f\u65f6\u95f4)\s*[:：]\s*(.+)$/i);
   if (explicit && isUnknown(explicit[1])) return 'occurredAt';
   if (!isUnknown(latest)) return '';
@@ -74,6 +91,86 @@ function unknownTarget(messages, latest) {
     ['evidence', /what .*temperature|what .*pressure|what .*airflow|\u6e29\u5ea6\u662f\u591a\u5c11|\u538b\u5dee|\u98ce\u91cf/i]
   ].filter(([, pattern]) => pattern.test(question));
   return candidates.length === 1 && ['occurredAt', 'impact'].includes(candidates[0][0]) ? candidates[0][0] : '';
+}
+
+// Recover only complete, declarative HVAC readings; never infer missing values.
+function completeHvacReadings(latest, proposed, supplied) {
+  if (!['hvac', 'hvac_cooling', 'hvac_local_comfort'].includes(supplied.category || proposed.category)) return;
+  const temperature = String.raw`[-+]?\d+(?:\.\d+)?\s*°?\s*[CF]`;
+  const patterns = [
+    new RegExp(String.raw`^(?:the )?(?:room|supply[ -]air) temperature is ${temperature}(?: and (?:the )?setpoint is ${temperature})?$`, 'i'),
+    new RegExp(String.raw`^(?:the )?setpoint is ${temperature}$`, 'i'),
+    /^(?:the )?filter differential pressure is (?:reported as )?(?:high|low|normal|unknown|\d+(?:\.\d+)?\s*(?:Pa|kPa))$/i,
+    /^(?:the )?chilled water valve command is \d+(?:\.\d+)?\s*%$/i,
+    /^(?:the )?fan is (?:running|not running|stopped)$/i
+  ];
+  // Split at sentence boundaries, not decimal points in measurements.
+  const readings = latest.split(/(?<=[.!?。！？])\s+|\r?\n/)
+    .map(line => line.trim()).filter(line =>
+      !/[?？]$/.test(line) && patterns.some(pattern => pattern.test(line.replace(/[.。]$/, '')))
+    );
+  if (!readings.length) return;
+  const modelLines = proposed.observations.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  // Replace a shortened model quote with the complete source sentence.
+  const retained = modelLines.filter(line => !readings.some(reading => reading.includes(line)));
+  const combined = [...new Set([...retained, ...readings])].join('\n');
+  if (combined.length > 6000) throw failure('This field has too much evidence. Review and shorten the summary before retrying.', 422);
+  proposed.observations = combined;
+
+  // A general cooling symptom is compatible with additional measurements.
+  // Specific existing readings and explicit corrections still require review.
+  const onlyGeneralSymptom = /^(?:not cooling adequately|insufficient cooling|cooling inadequate)[.]?$/i
+    .test((supplied.observations || '').trim());
+  if (onlyGeneralSymptom && !retained.length && !proposed.corrections?.includes('observations')) {
+    proposed.contradictions = proposed.contradictions?.filter(field => field !== 'observations');
+  }
+}
+
+function preserveRoomCorrection(current, replacement, latest) {
+  // This explicit single-room correction preserves all unrelated observations.
+  const temperature = String.raw`([-+]?\d+(?:\.\d+)?\s*°?\s*[CF])`;
+  const correction = latest.match(new RegExp(String.raw`^Correction:\s*(?:the )?room temperature is ${temperature}, not ${temperature}\.\s*(?:The )?setpoint remains ${temperature}\.\s*All other information is unchanged\.?$`, 'i'));
+  if (!correction) return replacement;
+  const reading = new RegExp(String.raw`^(?:the )?room temperature is ${temperature}(?: and (?:the )?setpoint is ${temperature})?\.?$`, 'i');
+  const parts = current.split(/(?<=[.!?])\s+|\r?\n/).map(line => line.trim()).filter(Boolean);
+  const oldReadings = parts.filter(line => reading.test(line));
+  // Ambiguous multi-room readings must not be removed automatically.
+  if (oldReadings.length !== 1) return replacement;
+  const old = oldReadings[0].match(reading);
+  const same = (a, b) => a.replace(/\s/g, '') === b.replace(/\s/g, '');
+  if (!same(old[1], correction[2]) || (old[2] && !same(old[2], correction[3]))) return replacement;
+  const retained = parts.filter(line => line !== oldReadings[0]);
+  const updates = replacement.split(/\r?\n/).filter(line => {
+    const match = line.match(reading);
+    return !match || !same(match[1], correction[2]);
+  });
+  // The old room-reading sentence may also contain the unchanged setpoint.
+  // Preserve its explicit restatement even when the model omits that clause.
+  const setpoint = latest.match(/(?:The )?setpoint remains [-+]?\d+(?:\.\d+)?\s*°?\s*[CF]\./i)?.[0];
+  if (setpoint && !updates.some(line => /\bsetpoint\b/i.test(line))) updates.push(setpoint);
+  return [...retained.filter(line => !updates.some(update => update.includes(line))), ...updates].join('\n');
+}
+
+// Preserve unrelated source facts when a single identified room reading changes.
+export function preserveUnrelatedRoomFacts(current, replacement, latest) {
+  const split = text => text.split(/(?<=[.!?。！？])\s+|\r?\n/).map(line => line.trim()).filter(Boolean);
+  const identify = line => {
+    const match = line.match(/(?:(AHU-[\w-]+)\s+)?(?:the\s+)?room temperature is\s*[-+]?\d+(?:\.\d+)?\s*°?\s*[CF]|室温(?:为|是)\s*[-+]?\d+(?:\.\d+)?\s*°?\s*[CF]/i);
+    return match ? { key: (match[1] || 'room').toLowerCase(), match } : null;
+  };
+  const changed = identify(latest);
+  if (!changed) return replacement;
+  const before = split(current);
+  const matches = before.filter(line => identify(line)?.key === changed.key);
+  const updates = split(replacement);
+  if (matches.length !== 1 || !updates.some(line => identify(line)?.key === changed.key && latest.includes(line))) return replacement;
+  const oldLine = matches[0];
+  // Keep a setpoint quoted from the same sentence, independently of the room reading.
+  const setpoint = oldLine.match(/(?:the )?setpoint (?:is|remains) [-+]?\d+(?:\.\d+)?\s*°?\s*[CF]\.?/i)?.[0];
+  const retained = before.filter(line => line !== oldLine);
+  if (setpoint && !updates.some(line => /setpoint/i.test(line))) retained.push(setpoint);
+  const normalized = value => value.toLowerCase().replace(/[.。]$/, '').trim();
+  return [...retained.filter(line => !updates.some(update => normalized(update).includes(normalized(line)))), ...updates].join('\n');
 }
 
 function conciseTitle(title, fields, source) {
@@ -137,10 +234,23 @@ export function createIntakeAgent({ env = process.env, fetchImpl = fetch, timeou
     let proposed;
     try {
       const content = body.choices?.[0]?.message?.content;
+      console.log('Intake raw response:', JSON.stringify({
+        finishReason: body.choices?.[0]?.finish_reason,
+        content
+      }, null, 2));
       if (typeof content !== 'string' || content.length > 60000) throw new Error();
       proposed = JSON.parse(content.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, ''));
       if (!proposed || typeof proposed !== 'object' || Array.isArray(proposed)) throw new Error();
       proposed.affectedScope ??= '';
+      // Convert text lists to newline-separated text before validation.
+      for (const key of ['observations', 'actionsTaken', 'affectedScope']) {
+        if (
+          Array.isArray(proposed[key]) &&
+          proposed[key].every(item => typeof item === 'string')
+        ) {
+          proposed[key] = proposed[key].join('\n');
+        }
+      }
       for (const key of extractionFields) {
         if (typeof proposed[key] !== 'string' || proposed[key].length > 6000) throw new Error();
       }
@@ -149,11 +259,19 @@ export function createIntakeAgent({ env = process.env, fetchImpl = fetch, timeou
         if (proposed[flag] !== undefined && (!Array.isArray(proposed[flag]) || proposed[flag].some(key => !extractionFields.includes(key)))) throw new Error();
       }
     } catch { throw failure('Intake returned an invalid result. Try again or save a draft.'); }
+    console.log('Intake extraction debug:', JSON.stringify({
+      observations: proposed.observations,
+      affectedScope: proposed.affectedScope,
+      corrections: proposed.corrections,
+      contradictions: proposed.contradictions,
+      manualFields: context?.manualFields || []
+    }, null, 2));
     const merged = { ...supplied };
     const extracted = {};
     const conflicts = [];
     const userMessages = context?.messages.filter(message => message.role === 'user').map(message => message.content) || [supplied.description];
     const latest = userMessages.at(-1) || '';
+    completeHvacReadings(latest, proposed, supplied);
     const target = unknownTarget(context?.messages, latest);
     if (target) proposed[target] = 'Unknown';
     for (const key of extractionFields) {
@@ -161,15 +279,41 @@ export function createIntakeAgent({ env = process.env, fetchImpl = fetch, timeou
       const rawValue = proposed[key].trim();
       const unknownValue = ['occurredAt', 'impact'].includes(key) && isUnknown(rawValue);
       if (unknownValue && isUnknown(latest) && target !== key) continue;
-      const value = unknownValue ? 'Unknown' : rawValue;
+      let value = unknownValue ? 'Unknown' : rawValue;
       if (!value) continue;
 
       // Use the same source validation for initial and follow-up messages.
-      const evidenceLines = value
+      let evidenceLines = value
         .split(/\r?\n/)
         .map(line => line.replace(/^\s*[-*•]\s*/, '').trim())
         .filter(Boolean);
       const isEvidenceList = ['observations', 'actionsTaken', 'affectedScope'].includes(key);
+      if (isEvidenceList) {
+        const fold = text => text.replace(/[A-Z]/g, letter => letter.toLowerCase());
+        evidenceLines = evidenceLines.map(line => {
+          if (userMessages.some(message => message.includes(line))) return line;
+          // A model may end a quoted clause with a period where the source
+          // continues with a comma. Only remove that terminal period; never
+          // change internal punctuation, values, units or words.
+          const candidates = line.endsWith('.') ? [line, line.slice(0, -1)] : [line];
+          for (const candidate of candidates) {
+            if (!candidate) continue;
+            const matches = userMessages.flatMap(message => {
+              const index = fold(message).indexOf(fold(candidate));
+              if (index < 0) return [];
+              const after = message[index + candidate.length];
+              // Prevent a shortened quote ending inside a word or number.
+              if (candidate !== line && after && !/[\s,.;:!?。；，！？]/.test(after)) return [];
+              return [message.slice(index, index + candidate.length)];
+            });
+            const unique = [...new Set(matches)];
+            if (unique.length === 1) return unique[0];
+          }
+          return line;
+        });
+        // Store the actual source spelling; do not accept paraphrases or new numbers.
+        value = evidenceLines.join('\n');
+      }
       const supported =
         key === 'category' ||
         (unknownValue && (target === key || userMessages.some(message => message.includes(rawValue)))) ||
@@ -197,12 +341,26 @@ export function createIntakeAgent({ env = process.env, fetchImpl = fetch, timeou
           const additions = [...new Set(evidenceLines)].filter(line =>
             (!current || latest.includes(line)) && !current.includes(line) && !currentLines.includes(line)
           );
-          const reviewRequired = proposed.corrections?.includes(key) || proposed.contradictions?.includes(key);
+          // Repeated evidence does not create a new conflict.
+          if (evidenceLines.every(line => current.includes(line))) continue;
+                   const reviewRequired = Boolean(current.trim()) && (
+            proposed.corrections?.includes(key) ||
+            proposed.contradictions?.includes(key)
+          );
           const hasLatestEvidence = evidenceLines.some(line => latest.includes(line));
 
           if (reviewRequired) {
             // Ask for confirmation before replacing corrected or conflicting evidence.
-            if (hasLatestEvidence) conflicts.push({ field: key, current, proposed: value });
+            let replacement = value;
+            // A room-reading correction does not retract the existing general symptom.
+            if (key === 'observations' && /^Correction:\s*(?:the )?room temperature is /i.test(latest)) {
+              const symptoms = currentLines.filter(line => /^(?:not cooling adequately|insufficient cooling|cooling inadequate)[.]?$/i.test(line));
+              replacement = [...symptoms.filter(line => !value.includes(line)), value].join('\n');
+              replacement = preserveRoomCorrection(current, replacement, latest);
+            }
+            if (key === 'observations') replacement = preserveUnrelatedRoomFacts(current, replacement, latest);
+            if (replacement.length > 6000) throw failure('This field has too much evidence. Review and shorten the summary before retrying.', 422);
+            if (hasLatestEvidence) conflicts.push({ field: key, current, proposed: replacement });
             continue;
           }
           if (!additions.length) continue;
@@ -217,17 +375,36 @@ export function createIntakeAgent({ env = process.env, fetchImpl = fetch, timeou
           continue;
         }
 
-        // Category codes are derived labels and need not occur literally in user text.
+              // Require confirmation before changing an established specific category.
         if (key === 'category') {
-          const downgrade = ['other', 'hvac'].includes(value) && supplied.category && !['other', 'hvac'].includes(supplied.category);
-          if (downgrade && !proposed.corrections?.includes(key)) continue;
-          if (locked) conflicts.push({ field: key, current: supplied[key] || '', proposed: value });
-          else merged[key] = extracted[key] = value;
+          const current = supplied.category || '';
+          const specificCategory = current &&
+            !['other', 'hvac'].includes(current);
+
+          const downgrade = specificCategory &&
+            ['other', 'hvac'].includes(value);
+
+          if (downgrade && !proposed.corrections?.includes(key)) {
+            continue;
+          }
+
+          if (locked || specificCategory) {
+            conflicts.push({
+              field: key,
+              current,
+              proposed: value
+            });
+          } else {
+            merged[key] = extracted[key] = value;
+          }
           continue;
         }
 
         const latestSupports = latest.includes(rawValue) || (unknownValue && target === key);
-        if (proposed.contradictions?.includes(key)) {
+                if (
+          Boolean(supplied[key]?.trim()) &&
+          proposed.contradictions?.includes(key)
+        ) {
           if (latestSupports) conflicts.push({ field: key, current: supplied[key] || '', proposed: value });
           continue;
         }

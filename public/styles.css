@@ -19,7 +19,8 @@
 }
 
 html {
-  scroll-behavior: smooth;
+  scroll-behavior: auto;
+  scrollbar-gutter: stable;
 }
 
 body {
@@ -463,3 +464,22 @@ button:disabled { opacity: .5; cursor: default; }
     grid-template-columns: 1fr;
   }
 }
+
+/* Use the document scrollbar for conversations; history expands on demand. */
+.message-log, .triage-chat-log { height: auto; max-height: none; overflow: visible; overscroll-behavior: auto; padding-right: 0; }
+.conversation-history { margin: 12px 0; padding: 12px; border: 1px solid var(--line); border-radius: 6px; }
+.conversation-history summary { cursor: pointer; color: #145e79; }
+.section-jumps { display: flex; flex-wrap: wrap; gap: 12px; margin: 16px 0; }
+.section-jumps a { color: #145e79; padding: 8px 12px; border: 1px solid var(--line); border-radius: 6px; background: white; }
+#message-form, #case-summary, #report-checks, #report-questions { scroll-margin-top: 20px; }
+.field-conflict p { white-space: pre-wrap; }
+.hypothesis-list { align-items: start; }
+.pill-library { display: grid; gap: 20px; }
+.library-search { display: grid; gap: 8px; margin: 20px 0; }
+.library-search input { width: 100%; padding: 12px; border: 1px solid #bcc8d2; border-radius: 6px; font: inherit; }
+.pill-rule summary { cursor: pointer; line-height: 1.6; }
+.pill-rule a, .pill-action a { color: #145e79; }
+.pill-action, .pill-rule { scroll-margin-top: 18px; overflow-wrap: anywhere; }
+.page-top { position: fixed; right: 20px; bottom: 18px; z-index: 10; box-shadow: var(--shadow); }
+@media (max-height: 650px) and (min-width: 981px) { .sidebar { position: static; height: auto; } }
+@media (max-width: 640px) { .page-top { right: 10px; bottom: 10px; } .pill-record { padding: 16px; } }
