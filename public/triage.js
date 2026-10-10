@@ -1,6 +1,6 @@
 import { api, escapeHtml as e, priorities, labels, details } from './incidents.js';
 
-const states = { complete: 'Analysis complete', needs_information: 'Needs information', out_of_scope: 'No matching Pill', failed: 'Analysis failed' };
+const states = { complete: 'Analysis complete', needs_information: 'Needs information', out_of_scope: 'No matching Pill', knowledge_gap: 'Knowledge gap', failed: 'Analysis failed' };
 const state = report => report ? (report.stale ? 'Outdated report' : states[report.status]) : 'Not analyzed';
 const back = '<a class="back-link" href="/triage"><span class="back-arrow" aria-hidden="true">&larr;</span>Back to triage</a>';
 
@@ -24,15 +24,16 @@ export async function renderTriage(root, pathname) {
 }
 
 function renderQueue(view, cases) {
-  view.innerHTML = `<header class="workspace-heading"><div><p class="eyebrow">Asset Operations</p><h2>AI Triage Workspace</h2></div><a class="button" href="/incidents">Incident Workspace</a></header>
+  view.innerHTML = `<header class="workspace-heading"><div><p class="eyebrow">Asset Operations</p><h2>Analysis queue</h2></div><a class="button" href="/incidents">All cases</a></header>
     <div class="list-toolbar triage-filters"><label>Search<input id="triage-search" type="search" placeholder="Case, asset or location"></label><label>Report status<select id="triage-filter"><option value="">All cases</option><option value="pending">Not analyzed</option><option value="complete">Analysis complete</option><option value="needs_information">Needs information</option><option value="out_of_scope">No matching Pill</option><option value="failed">Analysis failed</option><option value="stale">Outdated report</option></select></label></div>
     <p class="result-count" role="status"></p><div class="table-scroll"><table class="incident-table"><thead><tr><th scope="col">Case</th><th scope="col">Asset / Location</th><th scope="col">User priority</th><th scope="col">Report</th><th scope="col">Pill</th></tr></thead><tbody></tbody></table></div>`;
+  view.querySelector('#triage-filter').insertAdjacentHTML('beforeend', '<option value="knowledge_gap">Knowledge gap</option>');
   const update = () => {
     const query = view.querySelector('#triage-search').value.trim().toLowerCase();
     const filter = view.querySelector('#triage-filter').value;
     const rows = cases.filter(item => [item.id, item.title, item.asset, item.location].join(' ').toLowerCase().includes(query) && (!filter || (item.latest?.stale ? 'stale' : item.latest?.status || 'pending') === filter));
     view.querySelector('.result-count').textContent = `${rows.length} cases`;
-    view.querySelector('tbody').innerHTML = rows.map(item => `<tr><td><a class="incident-title" href="/triage/${e(item.id)}">${e(item.title)}</a><small>${e(item.id)}</small></td><td>${e(item.asset || 'Unconfirmed')}<small>${e(item.location)}</small></td><td>${e(priorities[item.priority] || 'Not set')}</td><td><span class="badge">${e(item.running ? 'Analyzing...' : state(item.latest))}</span></td><td>${item.supported ? 'AHU Cooling (demo)' : 'Not available'}</td></tr>`).join('') || '<tr><td colspan="5" class="empty-state">No matching cases. Confirm an incident in Incident Workspace to begin.</td></tr>';
+    view.querySelector('tbody').innerHTML = rows.map(item => `<tr><td><a class="incident-title" href="/triage/${e(item.id)}">${e(item.title)}</a><small>${e(item.id)}</small></td><td>${e(item.asset || 'Unconfirmed')}<small>${e(item.location)}</small></td><td>${e(priorities[item.priority] || 'Not set')}</td><td><span class="badge">${e(item.running ? 'Analyzing...' : state(item.latest))}</span></td><td>${item.supported ? 'AHU Cooling' : 'Not available'}</td></tr>`).join('') || '<tr><td colspan="5" class="empty-state">No matching cases. Confirm an incident in Incident Workspace to begin.</td></tr>';
   };
   view.querySelectorAll('input, select').forEach(element => element.addEventListener('input', update));
   update();
@@ -52,7 +53,7 @@ async function renderCase(view, id) {
     const report = data.reports.find(item => item.id === selectedId) || data.reports.at(-1);
     const running = busy || data.running;
     view.innerHTML = `${back}<header class="workspace-heading"><div><p class="eyebrow">${e(incident.id)}</p><h2>${e(incident.title)}</h2></div><button id="run-triage" class="primary" ${running || !data.eligible ? 'disabled' : ''}>${running ? 'Analyzing...' : !data.supported ? 'Check scope' : data.reports.length ? 'Run new analysis' : 'Analyze case'}</button></header>
-      <div class="detail-meta"><span>User priority: <strong>${e(priorities[incident.priority])}</strong></span><a href="/incidents/${e(id)}">View incident</a><a href="/incidents/${e(id)}/edit">Add or correct information</a></div>
+      <div class="detail-meta"><span>User priority: <strong>${e(priorities[incident.priority])}</strong></span><a href="/incidents/${e(id)}">View incident</a><a href="/incidents/${e(id)}/edit">Add or correct information</a>${data.reports.length ? `<a class="button" href="/review/${e(id)}">Review latest analysis</a>` : ''}</div>
       ${!data.eligible ? '<p class="triage-notice">Confirm intake and resolve outstanding information before running a new analysis.</p>' : ''}
       ${running ? '<p class="triage-notice" role="status">Analysis in progress...</p>' : ''}
       <p class="form-error" role="alert" ${error ? '' : 'hidden'}>${e(error)}</p>
@@ -150,8 +151,10 @@ export function reportMarkup(report, id, chatState) {
   return `<article class="triage-report"><nav class="section-jumps" aria-label="Report sections"><a href="#report-questions">Ask about this analysis</a>${report.actions?.length ? '<a href="#report-checks">Recommended checks</a>' : ''}</nav>
     <header class="report-heading"><h3>${e(state(report))}</h3><span class="badge">${pill ? e(`${pill.name} / ${pill.version}`) : 'Outside available scope'}</span></header>
     ${report.stale ? '<p class="triage-notice warning">This report refers to an older case snapshot. Confirm the latest intake and run a new analysis.</p>' : ''}
-    ${pill ? `<p class="triage-notice warning"><strong>Demo knowledge.</strong> ${e(pill.source)}</p>` : ''}
+    ${pill ? `<p class="triage-notice ${pill.status === 'approved' ? '' : 'warning'}"><strong>${pill.status === 'approved' ? 'Published knowledge.' : 'Demo knowledge.'}</strong> ${e(pill.source)}</p>` : ''}
     ${report.status === 'failed' ? `<p class="form-error" role="alert">${e(report.error)}</p>` : `<p class="report-summary">${e(report.summary)}</p>`}
+    ${report.coverage ? `<p>Knowledge coverage: ${e(report.coverage.status.replaceAll('_', ' '))}</p>` : ''}
+    <a href="/cases/${e(id)}/handling">${report.coverage?.expertHandlingRequired ? 'Record specialist handling and outcome' : 'Actual handling and outcome'}</a>
     ${report.questions?.length ? `<section class="triage-section"><h3>Information to confirm</h3><ul>${report.questions.map(item => `<li>${e(item.question)}</li>`).join('')}</ul><a class="button" href="/incidents/${e(id)}/edit">Add information to case</a></section>` : ''}
     ${report.hypotheses?.length ? `<section class="triage-section"><h3>Possible causes and evidence</h3><div class="hypothesis-list">${report.hypotheses.map(item => `<article class="hypothesis"><h4>${e(rules.get(item.ruleId)?.title || item.ruleId)}</h4>${item.reasoningSource === 'pill' ? '<p class="muted-label">Rule explanation</p>' : ''}<p>${e(item.reasoning)}</p>${item.reasoningSource === 'pill' ? '<p class="muted-label">Case evidence</p>' : ''}<dl>${item.evidence.map(evidence => `<div><dt>${e(labels[evidence.field])}</dt><dd>${e(evidence.quote)}</dd></div>`).join('')}</dl>${item.uncertainties.length ? `<p class="muted-label">Still unverified</p><ul>${item.uncertainties.map(value => `<li>${e(value)}</li>`).join('')}</ul>` : ''}<a href="#rule-${e(item.ruleId)}">${e(item.ruleId)}</a></article>`).join('')}</div></section>` : ''}
     ${report.actions?.length ? `<section id="report-checks" class="triage-section"><h3>Recommended checks</h3><ol class="triage-actions">${report.actions.map(action => `<li><strong>${e(action.title)}</strong> <span class="badge">${action.requiresApproval ? 'Requires human approval' : 'Read-only check'}</span><p>${e(action.instruction)}</p><small>${e(action.owner)} / ${action.ruleIds.map(e).join(', ')}</small></li>`).join('')}</ol></section>` : ''}

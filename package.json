@@ -8,9 +8,18 @@
     "start": "node server.js",
     "test": "node --test",
     "check:llm": "node scripts/check-llm.js",
-    "check:triage": "node scripts/check-triage.js"
+    "check:triage": "node scripts/check-triage.js",
+    "check:knowledge": "node scripts/check-knowledge.js"
   },
   "engines": {
-    "node": ">=20.12"
+    "node": ">=22.13.0"
+  },
+  "dependencies": {
+    "mammoth": "1.13.0",
+    "pdfjs-dist": "6.4.299"
+  },
+  "devDependencies": {
+    "jsdom": "29.1.1",
+    "jszip": "3.10.2"
   }
 }

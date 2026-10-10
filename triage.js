@@ -258,7 +258,7 @@ function reportView(report, incident) {
   return { ...report, stale: report.caseFingerprint !== caseFingerprint(incident) || incident.status !== 'ready_for_triage' };
 }
 
-export function createTriageService(store, agent = createTriageAgent(), model = process.env.SOCLAAS_MODEL || 'default', chatAgent = createTriageChat()) {
+export function createTriageService(store, agent = createTriageAgent(), model = process.env.SOCLAAS_MODEL || 'default', chatAgent = createTriageChat(), currentPill = async () => ahuPill) {
   const running = new Map();
   return {
     async list() {
@@ -275,13 +275,14 @@ export function createTriageService(store, agent = createTriageAgent(), model = 
       return { incident: caseData, eligible: canAnalyze(incident), supported: Boolean(selectPill(incident)), running: running.get(id) || null, reports: triageReports.map(report => reportView(report, incident)) };
     },
     async run(id, revision) {
+      const activePill = await currentPill();
       const incident = (await store.list()).find(item => item.id === id);
       if (!incident) throw fail('Incident not found.', 404);
       if (running.has(id)) throw fail('An analysis is already running for this case.', 409);
       if (!Number.isInteger(revision) || revision !== (incident.revision || 0)) throw fail('The case changed. Reload before analyzing.', 409);
       if (!canAnalyze(incident)) throw fail('Confirm intake and resolve pending information before analyzing.', 409);
       const snapshot = { id, revision, fields: Object.fromEntries(fields.map(key => [key, incident[key] || ''])) };
-      const report = { id: `TRI-${randomUUID()}`, createdAt: new Date().toISOString(), snapshot, caseFingerprint: caseFingerprint(incident), pill: selectPill(incident), model: null, promptVersion: triagePromptVersion };
+      const report = { id: `TRI-${randomUUID()}`, createdAt: new Date().toISOString(), snapshot, caseFingerprint: caseFingerprint(incident), pill: selectPill(incident) ? structuredClone(activePill) : null, model: null, promptVersion: triagePromptVersion };
       running.set(id, { id: report.id, startedAt: report.createdAt });
       try {
         const missing = ['asset', 'observations'].filter(field => unknown(incident[field]));
@@ -293,15 +294,20 @@ export function createTriageService(store, agent = createTriageAgent(), model = 
           report.model = model;
           try {
             const result = validateTriageResult(await agent(snapshot, report.pill), snapshot, report.pill);
-            Object.assign(report, result, { status: result.missingFields.length || !result.hypotheses.length ? 'needs_information' : 'complete' });
-            if (!result.hypotheses.length && !report.missingFields.length) report.missingFields = ['observations'];
+            Object.assign(report, result, { status: result.missingFields.length ? 'needs_information' : !result.hypotheses.length ? 'knowledge_gap' : 'complete' });
           } catch (error) {
             Object.assign(report, { status: 'failed', error: error.status ? error.message : 'Analysis failed. Retry the request.', summary: '', hypotheses: [], actions: [], missingFields: [], prioritySuggestion: null });
           }
         }
         report.questions = report.missingFields.map(field => ({ field, question: questions[field] }));
+        report.coverage = {
+          status: report.status === 'out_of_scope' ? 'no_pill' : report.status === 'knowledge_gap' ? 'no_matching_rule' : report.status === 'failed' ? 'not_assessed' : report.missingFields.length ? report.hypotheses.length ? 'partial' : 'insufficient_facts' : 'rules_matched',
+          matchedRuleIds: report.hypotheses.map(h => h.ruleId),
+          expertHandlingRequired: ['out_of_scope', 'knowledge_gap'].includes(report.status),
+          fullCoverageVerified: false
+        };
         report.governance = {
-          mode: 'rules', demoOnly: true, executionAllowed: false,
+          mode: 'rules', demoOnly: report.pill?.status !== 'approved', executionAllowed: false,
           evidenceChecked: report.status === 'complete' || (report.model !== null && report.status === 'needs_information'),
           approvalRequired: report.actions.some(action => action.requiresApproval),
           boundaries: report.pill?.boundaries || ['No matching Pill. No operational actions are authorized.'],

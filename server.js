@@ -8,6 +8,10 @@ import { createIntakeAgent } from './intake-agent.js';
 import { loadLocalEnv } from './config.js';
 import { sendMessage, manualFieldsFor } from './conversation.js';
 import { createTriageService, ahuPill } from './triage.js';
+import { createReviewService } from './review.js';
+import { createPillStudio } from './pill-studio.js';
+import { uploadLimit } from './document-parser.js';
+import { createLearningService } from './learning.js';
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const publicDir = join(__dirname, "public");
@@ -15,46 +19,16 @@ const port = process.env.PORT || 5173;
 const host = process.env.HOST || "127.0.0.1";
 
 const modules = [
-  {
-    id: "dashboard",
-    title: "Operations Dashboard",
-    summary: "Portfolio overview, open incidents, high-risk alerts, and Pill status."
-  },
-  {
-    id: "incidents",
-    title: "Incident Workspace",
-    summary: "The shared workspace where new and existing operational cases live."
-  },
-  {
-    id: "triage",
-    title: "AI Triage Workspace",
-    summary: "Case analysis, supporting evidence and Pill-based recommendations."
-  },
-  {
-    id: "review",
-    title: "Human Review Center",
-    summary: "A placeholder for manager review, approval, editing, and escalation."
-  },
-  {
-    id: "learning",
-    title: "Feedback & Learning Queue",
-    summary: "A placeholder for outcome capture and expert-reviewed learning items."
-  },
-  {
-    id: "governance",
-    title: "Pill Governance Library",
-    summary: "A placeholder for Pill versions, owners, rules, approvals, and audit history."
-  }
+  { id: 'overview', title: 'Operations Overview', summary: 'Cases, reviews and knowledge updates.' },
+  { id: 'cases', title: 'Case Workspace', summary: 'Case intake, analysis and human decisions.' },
+  { id: 'studio', title: 'Pill Studio', summary: 'Expert knowledge, drafts and improvement candidates.' },
+  { id: 'library', title: 'Pill Library', summary: 'Approved domain capabilities.' }
 ];
-
 const apiRoutes = {
   "/api/modules": { modules },
   "/api/dashboard": { module: modules[0] },
-  "/api/incidents": { module: modules[1] },
-  "/api/triage": { module: modules[2] },
-  "/api/review": { module: modules[3] },
-  "/api/learning": { module: modules[4] },
-  "/api/governance": { module: modules[5], pills: [ahuPill] }
+  "/api/governance": { module: modules[3], pills: [ahuPill] },
+  "/api/library": { module: modules[3], pills: [ahuPill].filter(pill => pill.status === 'approved') }
 };
 
 const contentTypes = {
@@ -107,13 +81,70 @@ async function readBody(req) {
   catch { throw Object.assign(new Error('Invalid JSON body.'), { status: 400 }); }
 }
 
-export function createHandler(store = createIncidentStore(process.env.DATA_FILE || join(__dirname, 'data/incidents.json')), intakeAgent = createIntakeAgent(), triageAgent) {
+export function createHandler(store = createIncidentStore(process.env.DATA_FILE || join(__dirname, 'data/incidents.json')), intakeAgent = createIntakeAgent(), triageAgent, studio = createPillStudio(process.env.PILL_DATA_FILE || join(__dirname, 'data/pills.json')), learningAgent) {
  const busyCases = new Set();
- const triage = createTriageService(store, triageAgent);
+ const triage = createTriageService(store, triageAgent, undefined, undefined, () => studio.active());
+ const review = createReviewService(store, () => studio.active());
+ const learning = createLearningService(store, studio, learningAgent);
  return async (req, res) => {
  try {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const path = url.pathname;
+  const handlingMatch = path.match(/^\/api\/cases\/([^/]+)\/(handling|learning)$/);
+  if (handlingMatch) {
+    const [, id, operation] = handlingMatch;
+    if (req.method === 'GET') return sendJson(res, 200, await learning.get(id));
+    if (req.method === 'POST') { const body = await readBody(req); return sendJson(res, 201, operation === 'handling' ? { incident: await learning.record(id, body) } : { run: await learning.analyze(id, body) }); }
+    return sendJson(res, 405, { error: 'Method not allowed.' });
+  }
+  const proposalMatch = path.match(/^\/api\/learning\/([^/]+)\/([^/]+)\/([^/]+)\/(review|apply)$/);
+  if (proposalMatch && req.method === 'POST') {
+    const [, id, runId, proposalId, operation] = proposalMatch, body = await readBody(req);
+    return sendJson(res, 200, operation === 'review' ? { proposal: await learning.decide(id, runId, proposalId, body) } : { record: await learning.apply(id, runId, proposalId, body) });
+  }
+  if (path === '/api/library' && req.method === 'GET') return sendJson(res, 200, { pills: await studio.library() });
+  const libraryMatch = path.match(/^\/api\/library\/([^/]+)(?:\/(compare|versions)(?:\/([^/]+)\/(activate|disable|restore))?)?$/);
+  if (libraryMatch) {
+    const [, id, section, version, operation] = libraryMatch;
+    if (req.method === 'GET' && !section) return sendJson(res, 200, await studio.versionHistory(id));
+    if (req.method === 'GET' && section === 'compare') return sendJson(res, 200, await studio.compareVersions(id, url.searchParams.get('from'), url.searchParams.get('to')));
+    if (req.method === 'POST' && operation) return sendJson(res, 200, await studio.manageVersion(id, version, operation, await readBody(req)));
+    return sendJson(res, 405, { error: 'Method not allowed.' });
+  }
+  if (path === '/api/studio' && req.method === 'GET') { const records = await studio.list(), incidents = await store.list(); return sendJson(res, 200, { records, drafts: records.filter(r => r.state !== 'published').map(r => r.content.pill), candidates: incidents.flatMap(i => i.learningCandidates || []), pendingLearningProposals: incidents.flatMap(i => (i.learningRuns || []).flatMap(r => r.proposals)).filter(p => !p.decision).length }); }
+  if (path === '/api/studio' && req.method === 'POST') return sendJson(res, 201, { record: await studio.create(await readBody(req)) });
+  const documentMatch = path.match(/^\/api\/studio\/([^/]+)\/documents(?:\/([^/]+)(?:\/(analyze|merge|file))?)?$/);
+  if (documentMatch) {
+    const [, pillId, documentId, operation] = documentMatch;
+    if (req.method === 'POST' && !documentId) {
+      let filename;
+      try { filename = decodeURIComponent(req.headers['x-filename'] || ''); } catch { return sendJson(res, 400, { error: 'Invalid filename encoding.' }); }
+      const chunks = []; let size = 0;
+      for await (const chunk of req) { size += Buffer.byteLength(chunk); if (size > uploadLimit) return sendJson(res, 413, { error: 'Files must be no larger than 10 MB.' }); chunks.push(Buffer.from(chunk)); }
+      return sendJson(res, 201, { record: await studio.upload(pillId, Number(req.headers['x-revision']), filename, Buffer.concat(chunks)) });
+    }
+    if (req.method === 'GET' && operation === 'file') {
+      const { document, bytes } = await studio.original(pillId, documentId);
+      res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'X-Content-Type-Options': 'nosniff', 'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(document.name).replace(/'/g, '%27')}` }); return res.end(bytes);
+    }
+    if (req.method === 'POST' && operation === 'analyze') { const body = await readBody(req); return sendJson(res, 200, { record: await studio.analyze(pillId, documentId, body?.revision) }); }
+    if (req.method === 'POST' && operation === 'merge') return sendJson(res, 200, { record: await studio.merge(pillId, documentId, await readBody(req)) });
+    return sendJson(res, 405, { error: 'Method not allowed.' });
+  }
+  const studioMatch = path.match(/^\/api\/studio\/([^/]+)(?:\/(save|validate|submit|publish|return|fork|incorporate-learning))?$/);
+  if (studioMatch) {
+    if (req.method === 'GET' && !studioMatch[2]) return sendJson(res, 200, { record: await studio.get(studioMatch[1]) });
+    if (req.method === 'POST' && studioMatch[2]) return sendJson(res, 200, { record: await studio.change(studioMatch[1], studioMatch[2], await readBody(req)) });
+    return sendJson(res, 405, { error: 'Method not allowed.' });
+  }
+  if (path === '/api/review' && req.method === 'GET') return sendJson(res, 200, { cases: await review.list() });
+  if (path === '/api/learning' && req.method === 'GET') return sendJson(res, 200, { runs: await learning.list(), candidates: (await store.list()).flatMap(i => i.learningCandidates || []) });
+  const reviewMatch = path.match(/^\/api\/review\/([^/]+)$/);
+  if (reviewMatch) {
+    if (req.method === 'GET') return sendJson(res, 200, await review.get(reviewMatch[1]));
+    if (req.method === 'POST') return sendJson(res, 201, { review: await review.submit(reviewMatch[1], await readBody(req)) });
+    return sendJson(res, 405, { error: 'Method not allowed.' });
+  }
   if (path === '/api/triage' && req.method === 'GET') return sendJson(res, 200, { cases: await triage.list() });
   const triageMatch = path.match(/^\/api\/triage\/([^/]+)(\/runs)?$/);
   if (triageMatch) {

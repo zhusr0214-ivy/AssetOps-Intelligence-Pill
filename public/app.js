@@ -1,187 +1,64 @@
 import { jumpToSection } from './navigation.js';
-import { renderLibrary } from './library.js';
-import { renderIncidents, escapeHtml } from './incidents.js';
+import { renderLibraryPage } from './library.js';
+import { renderIncidents, escapeHtml as e, api } from './incidents.js';
 import { renderTriage } from './triage.js';
+import { renderReview } from './review.js';
+import { renderStudio } from './studio.js';
+import { renderHandling } from './learning.js';
+import { canonicalPath, caseRoute } from './routes.js';
 
-const nav = document.querySelector("#nav");
-const pageRoot = document.querySelector("#page");
+const nav = document.querySelector('#nav');
+const pageRoot = document.querySelector('#page');
+const tabs = (items, active) => `<nav class="workspace-tabs" aria-label="Workspace views">${items.map(([href, label, value]) => `<a href="${href}" ${active === value ? 'aria-current="page"' : ''}>${label}</a>`).join('')}</nav>`;
+function navigate(path) { window.history.pushState({}, '', canonicalPath(path)); renderRoute(); }
 
-const iconMap = {
-  dashboard: "01",
-  incidents: "02",
-  triage: "03",
-  review: "04",
-  learning: "05",
-  governance: "06"
-};
-
-const routeMap = {
-  "/": "dashboard",
-  "/dashboard": "dashboard",
-  "/incidents": "incidents",
-  "/triage": "triage",
-  "/review": "review",
-  "/learning": "learning",
-  "/governance": "governance"
-};
-
-async function loadModules() {
-  const response = await fetch("/api/modules");
-  if (!response.ok) {
-    throw new Error("Unable to load module skeleton");
-  }
-  return response.json();
+async function overview(view) {
+  const [incidents, reviews, studio, library] = await Promise.all([api('/api/incidents'), api('/api/review'), api('/api/studio'), api('/api/library')]);
+  if (!view.isConnected) return;
+  const pending = reviews.cases.filter(c => c.state === 'pending');
+  const rows = cases => cases.map(c => `<li><a href="/cases/${e(c.id)}">${e(c.title)}</a><span>${e(c.asset)} / ${e(c.priority)}</span></li>`).join('');
+  view.innerHTML = `<header class="workspace-heading"><h2>Operations Overview</h2><a class="button primary" href="/cases/new">New case</a></header><div class="overview-metrics">${[['/cases', 'Cases', incidents.incidents.length], ['/cases/review', 'Pending review', pending.length], ['/studio/improvements', 'Improvement candidates', studio.candidates.length], ['/library', 'Approved Pills', library.pills.length]].map(([url, label, count]) => `<a href="${url}"><span>${label}</span><strong>${count}</strong></a>`).join('')}</div><section class="triage-section"><h3>Awaiting review</h3>${pending.length ? `<ul class="overview-list">${pending.slice(0, 8).map(c => `<li><a href="/cases/${e(c.id)}/review">${e(c.title)}</a><span>${e(c.asset)} / ${e(c.priority)}</span></li>`).join('')}</ul>` : '<p class="empty-state">No cases awaiting review.</p>'}</section><section class="triage-section"><h3>Recent cases</h3>${incidents.incidents.length ? `<ul class="overview-list">${rows(incidents.incidents.slice(0, 8))}</ul>` : '<p class="empty-state">No cases yet.</p>'}</section>`;
+  view.querySelector('.overview-metrics a[href="/studio/improvements"] strong').textContent = String(studio.candidates.length + (studio.pendingLearningProposals || 0));
+  view.querySelector('.overview-metrics a[href="/library"] strong').textContent = String(new Set(library.pills.map(p => p.id)).size);
 }
 
-async function renderGovernance() {
-  const response = await fetch('/api/governance');
-  if (!response.ok) throw new Error('Unable to load Pill library');
-  const { pills } = await response.json();
-  renderLibrary(pageRoot, pills);
-}
-
-function renderNav(modules) {
-  nav.innerHTML = modules
-    .map(
-      (module) => `
-        <a href="/${module.id === "dashboard" ? "dashboard" : module.id}" class="nav-item" data-route="${module.id}">
-          <span>${iconMap[module.id]}</span>
-          ${module.title}
-        </a>
-      `
-    )
-    .join("");
-}
-
-function renderDashboard(modules) {
-  pageRoot.innerHTML = `
-    <section class="hero-panel">
-      <div>
-        <p class="eyebrow">MVP Frame</p>
-        <h2>Six core product sections</h2>
-      </div>
-      <p>
-        This skeleton defines the website structure only. Each section has its own
-        page, while detailed business functions can be designed later.
-      </p>
-    </section>
-
-    <section class="module-grid">
-      ${modules
-        .map(
-          (module) => `
-            <a href="/${module.id === "dashboard" ? "dashboard" : module.id}" class="module-card">
-              <div class="module-number">${iconMap[module.id]}</div>
-              <div>
-                <h3>${module.title}</h3>
-                <p>${module.summary}</p>
-              </div>
-              <div class="placeholder">Open section page</div>
-            </a>
-          `
-        )
-        .join("")}
-    </section>
-  `;
-}
-
-function renderSectionPage(module) {
-  pageRoot.innerHTML = `
-    <section class="section-page">
-      <div class="section-heading">
-        <div class="module-number">${iconMap[module.id]}</div>
-        <div>
-          <p class="eyebrow">Section Page</p>
-          <h2>${module.title}</h2>
-          <p>${module.summary}</p>
-        </div>
-      </div>
-
-      <div class="page-placeholder">
-        <strong>${module.title}</strong>
-        <span>Page framework only. Detailed functions will be added later.</span>
-      </div>
-    </section>
-  `;
-}
-
-function setActiveNav(activeId) {
-  document.querySelectorAll(".nav-item").forEach((item) => {
-    item.classList.toggle("active", item.dataset.route === activeId);
-  });
-}
-
-function renderRoute(modules) {
+async function renderRoute() {
   window.scrollTo({ top: 0, behavior: 'instant' });
-  const pathname = window.location.pathname;
-  const activeId = pathname.startsWith('/triage/') ? 'triage' : pathname.startsWith('/incidents/') ? 'incidents' : routeMap[pathname] || "dashboard";
-  const activeModule = modules.find((module) => module.id === activeId) || modules[0];
-
-  setActiveNav(activeModule.id);
-
-  if (activeId === 'triage') {
-    renderTriage(pageRoot, pathname);
-    return;
-  }
-
-  if (activeId === 'incidents') {
-    renderIncidents(pageRoot, pathname, path => {
-      window.history.pushState({}, '', path);
-      renderRoute(modules);
-    });
-    return;
-  }
-
-  if (activeId === 'dashboard') {
-    renderDashboard(modules);
-    return;
-  }
-
-  if (activeId === 'governance') {
-    renderGovernance().catch(error => renderError(error.message));
-    return;
-  }
-
-  renderSectionPage(activeModule);
+  const path = canonicalPath(window.location.pathname);
+  if (path !== window.location.pathname) window.history.replaceState({}, '', path + window.location.search + window.location.hash);
+  const active = path.split('/')[1];
+  nav.querySelectorAll('a').forEach(link => { link.classList.toggle('active', link.dataset.route === active); if (link.dataset.route === active) link.setAttribute('aria-current', 'page'); else link.removeAttribute('aria-current'); });
+  const view = document.createElement('section'); view.className = 'workspace-view'; pageRoot.replaceChildren(view);
+  view.innerHTML = '<p role="status">Loading...</p>';
+  try {
+    if (active === 'cases') {
+      const route = caseRoute(path); if (!route) throw new Error('Case page not found.');
+      const base = route.id ? `/cases/${route.id}` : '/cases';
+      view.innerHTML = `<header class="workspace-heading"><h2>Case Workspace</h2>${route.id ? '<a href="/cases">All cases</a>' : ''}</header>${tabs([[base, route.id ? 'Case information' : 'All cases', 'intake'], [`${base}/triage`, 'AI analysis', 'triage'], [`${base}/review`, 'Human review', 'review'], ...(route.id ? [[`${base}/handling`, 'Handling & Outcome', 'handling']] : [])], route.stage)}<div class="case-stage"></div>`;
+      const content = view.querySelector('.case-stage');
+      if (route.stage === 'handling') await renderHandling(content, route.id);
+      else if (route.stage === 'triage') await renderTriage(content, route.legacy);
+      else if (route.stage === 'review') await renderReview(content, route.legacy);
+      else await renderIncidents(content, route.legacy, navigate);
+    } else if (path === '/overview') await overview(view);
+    else if (path === '/studio' || path.startsWith('/studio/')) await renderStudio(view, path, navigate);
+    else if (path === '/library' || path.startsWith('/library/')) await renderLibraryPage(view, path, window.location.search);
+    else throw new Error('Page not found.');
+  } catch (error) { if (view.isConnected) view.innerHTML = `<p class="form-error" role="alert">${e(error.message)}</p>`; }
 }
 
-function bindNavigation(modules) {
-  document.addEventListener("click", (event) => {
-    if (jumpToSection(event, document)) return;
-    const link = event.target.closest("a[href^='/']");
-    if (!link || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || link.target || link.download) return;
-
-    event.preventDefault();
-    window.history.pushState({}, "", link.getAttribute("href"));
-    renderRoute(modules);
-  });
-
-  window.addEventListener("popstate", () => renderRoute(modules));
-}
-
-function renderError(message) {
-  pageRoot.innerHTML = `
-    <article class="module-card">
-      <h3>Unable to load framework</h3>
-      <p>${escapeHtml(message)}</p>
-    </article>
-  `;
-}
-
-function renderSite(modules) {
-  const top = document.createElement('button');
-  top.className = 'page-top'; top.textContent = '↑ Back to top'; top.hidden = true;
-  top.onclick = () => window.scrollTo({ top: 0, behavior: 'instant' });
-  document.body.append(top);
-  window.addEventListener('scroll', () => { top.hidden = window.scrollY < 500; }, { passive: true });
-  renderNav(modules);
-  bindNavigation(modules);
-  renderRoute(modules);
-}
-
+document.addEventListener('click', event => {
+  if (jumpToSection(event, document)) return;
+  const link = event.target.closest('a[href^="/"]');
+  if (!link || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || link.target || link.download) return;
+  event.preventDefault(); navigate(link.getAttribute('href'));
+});
+window.addEventListener('popstate', renderRoute);
 try {
-  const { modules } = await loadModules();
-  renderSite(modules);
-} catch (error) {
-  renderError(error.message);
-}
+  const { modules } = await api('/api/modules');
+  nav.innerHTML = modules.map((module, index) => `<a href="/${e(module.id)}" class="nav-item" data-route="${e(module.id)}"><span>0${index + 1}</span>${e(module.title)}</a>`).join('');
+  const top = document.createElement('button'); top.className = 'page-top'; top.textContent = '↑ Back to top'; top.hidden = true;
+  top.onclick = () => window.scrollTo({ top: 0, behavior: 'instant' }); document.body.append(top);
+  window.addEventListener('scroll', () => { top.hidden = window.scrollY < 500; }, { passive: true });
+  await renderRoute();
+} catch (error) { pageRoot.innerHTML = `<p class="form-error" role="alert">${e(error.message)}</p>`; }

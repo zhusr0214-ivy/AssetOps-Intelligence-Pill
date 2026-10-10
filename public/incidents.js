@@ -42,6 +42,13 @@ export async function renderIncidents(root, pathname, navigate) {
       if (!view.isConnected) return;
       if (match[2]) renderConversation(view, incident, navigate);
       else renderDetail(view, incident);
+      const review = incident.reviews?.at(-1);
+      if (review) {
+        const notice = document.createElement('section');
+        notice.className = 'triage-notice';
+        notice.innerHTML = `<strong>Latest review: ${e(review.decision.replaceAll('_', ' '))}</strong><p>${e(review.questions || review.notes)}</p><a href="/review/${e(incident.id)}">Open review history</a>`;
+        view.prepend(notice);
+      }
     }
   } catch (error) {
     if (view.isConnected) view.innerHTML = `<a class="back-link" href="/incidents"><span class="back-arrow" aria-hidden="true">&larr;</span>Back to incidents</a><p class="form-error" role="alert">${e(error.message)}</p>`;
@@ -50,7 +57,7 @@ export async function renderIncidents(root, pathname, navigate) {
 
 function renderList(view, incidents) {
   view.innerHTML = `
-    <header class="workspace-heading"><div><p class="eyebrow">Asset Operations</p><h2>Incident Workspace</h2></div><a class="button primary" href="/incidents/new">New incident</a></header>
+    <header class="workspace-heading"><div><p class="eyebrow">Asset Operations</p><h2>Cases</h2></div><a class="button primary" href="/incidents/new">New incident</a></header>
     <div class="list-toolbar">
       <label class="search-field">Search<input type="search" id="incident-search" placeholder="ID, title, asset or location"></label>
       <label>Status<select id="status-filter">${options(statuses, '', 'All statuses')}</select></label>

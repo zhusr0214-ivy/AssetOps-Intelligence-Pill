@@ -1,19 +1,23 @@
 # AssetOps Intelligence Pill
 
-Lightweight full-stack scaffold for the six major sections of the Asset Operations hackathon project.
+Asset Operations workspace organized around cases and reusable domain knowledge.
 
 ## Sections
 
-1. Operations Dashboard
-2. Incident Workspace
-3. AI Triage Workspace
-4. Human Review Center
-5. Feedback & Learning Queue
-6. Pill Governance Library
+1. Operations Overview: live case, review and knowledge counts.
+2. Case Workspace: intake, analysis and human review within one case.
+3. Pill Studio: existing demo drafts and review-derived improvement candidates.
+4. Pill Library: approved capabilities only.
+
+Pill Studio supports expert sources, structured drafts, reference/example validation,
+expert review, publication and immutable version history. Rollback and case execution/
+outcome capture remain future work. The seeded demo remains unpublished until a user
+completes its expert sources/examples and approves it through Studio.
 
 ## Run
 
 ```bash
+npm install
 npm run dev
 ```
 
@@ -21,12 +25,17 @@ Then open `http://localhost:5173`.
 
 ## Pages
 
-- `/dashboard`
-- `/incidents`
-- `/triage`
-- `/review`
-- `/learning`
-- `/governance`
+- `/overview`
+- `/cases`, `/cases/new`, `/cases/:id`, `/cases/:id/edit`
+- `/cases/:id/triage`, `/cases/:id/review`
+- `/cases/triage`, `/cases/review`: cross-case queues
+- `/studio`, `/studio/improvements`
+- `/library`
+
+Existing `/dashboard`, `/incidents`, `/triage`, `/review`, `/learning` and
+`/governance` links continue to resolve to the new navigation. Existing backend
+incident, triage and review APIs are retained; `/api/studio` and `/api/library`
+expose draft/candidate and approved-knowledge views respectively.
 
 ## API Skeleton
 
@@ -149,3 +158,212 @@ If port 5173 is occupied:
 ```bash
 PORT=5174 npm run dev
 ```
+# Human Review MVP
+
+Human Review Center is available at `/review`, with case detail at `/review/:id`.
+The latest triage report is checked against the current case fingerprint, Pill
+definition, scope, evidence references, missing information and action catalog.
+The review package is generated on read and rechecked on submit, then saved with
+the decision. Existing reports can be reviewed without a data migration.
+
+Reviewers record their assessment separately from the action plan, accept or omit
+catalog actions, and approve, approve with changes, request information, request
+re-analysis, refer to a specialist or reject. Omitted actions need reasons.
+Approval requires verified facts, supported analysis, an owner and a current
+complete report without governance blockers. User priority is retained.
+Free-text revised or additional actions are proposals pending expert validation;
+they never become approved catalog actions through the review form.
+
+Information requests return the incident to intake with the review questions.
+New facts require confirmation and a new triage report before another review.
+Decisions use revision checks to reject concurrent or duplicate submissions.
+History preserves report/Pill versions, governance findings and decision rationale.
+Each review also creates a pending feedback candidate visible in `/learning`.
+Candidates remain pending until an expert incorporates and validates their knowledge
+in a Studio draft. Candidate resolution status and equipment execution are not implemented.
+
+Endpoints: `GET /api/review`, `GET /api/review/:id`,
+`POST /api/review/:id`, `GET /api/learning`.
+
+This local MVP records a self-declared reviewer name, not an authenticated identity.
+It does not enforce reviewer roles. Current demo knowledge supports advisory plan
+review only; no equipment commands or work orders are issued. Rule checks validate
+references and known patterns, not general engineering correctness or every possible
+semantic contradiction. Experts must assess source quality and operating context.
+
+## Pill Studio MVP
+
+Open `/studio` to create an AHU cooling capability or edit the seeded demo. Add expert
+sources (contributor, reference and captured experience), decision rules, an action
+catalog, boundaries, escalation conditions and example cases. Save, validate, submit
+for expert review, then return for changes or approve and publish. Unsaved edits cannot
+be validated or published. Every saved edit invalidates prior validation.
+
+Validation checks required content, unique IDs, reciprocal rule/action links and
+example references. It does not run examples through an LLM or establish engineering
+correctness. The reviewer must explicitly confirm the knowledge before publication.
+Reviewer identity is self-declared; authentication/role enforcement remains future work.
+
+Published snapshots retain sources, examples, validation and approval notes. Editing
+requires a new draft; releases receive monotonically increasing versions per Pill.
+Publication activates that version as the single AHU capability for subsequent Triage
+runs, replacing the previously active AHU release. Drafts never affect runtime knowledge.
+With no publication the application continues to use its original demo Pill. Library
+shows published versions and marks the active one. Historical reports retain their
+original Pill snapshot; review of a report with a superseded definition is blocked.
+Automatic equipment execution remains disabled for published knowledge as well.
+
+Storage: `data/pills.json` (ignored by Git), configurable with `PILL_DATA_FILE`.
+Run only one server process per data file. Writes are serialized and atomic, with
+revision checks for conflicting edits and duplicate publication requests.
+
+API: `GET/POST /api/studio`, `GET /api/studio/:id`, and
+`POST /api/studio/:id/{save,validate,submit,publish,return,fork}`.
+Published versions: `GET /api/library`.
+
+## Knowledge Capture Agent
+
+Studio now starts with **Upload documents** (`/studio/new/upload`) or **Capture
+expert experience** (`/studio/new/expert`). Both create a draft and a retained source.
+Existing editable drafts also accept additional uploads. Click **Analyze with Knowledge
+Capture Agent** to send extracted text to the configured SOCLAAS model. Upload/parsing
+alone does not call the model. The same server-side credentials used by Triage apply.
+
+PDF, DOCX, UTF-8 TXT and Markdown are supported. Limits: 10 MB per file, 100 PDF pages,
+60,000 extracted characters and 10 source files per Pill. Larger sources must be split.
+The parser runs in a worker with a 30-second timeout and a bounded JavaScript heap.
+PDF references retain page numbers; DOCX/text references retain paragraph numbers.
+Scanned PDFs require OCR before upload; no OCR or faithful table-layout extraction is
+implemented. Empty pages and DOCX parsing limitations are surfaced for source review.
+
+The agent extracts scope, evidence, rules, actions, boundaries, escalation and examples,
+plus missing information and conflicts. Large sources are analyzed in bounded sections;
+cross-section consistency remains an expert review task. Every candidate must cite
+exact source text; invalid citations reject the extraction. Exact matching checks
+provenance, not semantic correctness. Model calls treat uploaded content as untrusted
+source data and cannot publish or execute actions. No silent rules fallback is used.
+
+Review candidates, edit their wording, select the items to keep, and confirm the source
+review. Unselected items are recorded as rejected. Merging appends to the draft and
+invalidates its previous validation; existing knowledge is not overwritten. Linked
+actions/examples require their selected rule candidates. Action owners and example
+rationales absent from source remain blank for expert completion, and imported actions
+default to requiring approval. The draft still requires validation and publication.
+
+Source files are retained under `data/pills.json.uploads/` (or next to `PILL_DATA_FILE`),
+and extracted blocks, SHA-256 hashes, model/prompt versions, citations and candidate
+decisions are stored with the Pill. Original files can be downloaded from the editor.
+Published versions snapshot capture decisions alongside their knowledge sources.
+Failed extractions can retry; successful or reviewed extractions cannot be overwritten.
+Revision checks prevent stale or duplicate merges. After a server restart an interrupted
+extraction can be retried. Reviewer identity remains self-declared in this local MVP.
+
+API: binary `POST /api/studio/:id/documents` with `X-Filename` (URI-encoded) and
+`X-Revision`; `POST /api/studio/:id/documents/:documentId/analyze`;
+`POST /api/studio/:id/documents/:documentId/merge`;
+`GET /api/studio/:id/documents/:documentId/file`.
+
+Run `npm run check:knowledge` for a live synthetic-source connectivity check without
+changing Pill data. `npm test` covers parsers, citation validation, merging, retry,
+concurrency and DOM interactions without starting a browser. Node 22.13+ is required
+by the PDF parser; this project is tested on Node 24.
+
+Dependency audit: Mammoth's CLI dependency chain (`argparse` / `sprintf-js`) currently
+has a moderate denial-of-service advisory with no patched upstream release available.
+The application calls Mammoth's raw-text library API, not its CLI or format-string
+parser. Parser work remains bounded by the worker timeout; recheck this dependency
+before a production deployment.
+
+## Governed Learning and Operational Records
+
+Each case now has **Handling & Outcome** at `/cases/:id/handling`. Record actual
+actions (who, when, rationale and deviations), then outcomes (verification evidence,
+remaining issues and resolved/unresolved status). Records are append-only; corrections
+reference an earlier record without removing it. This is a record of human activity,
+not an equipment command, work order or execution authorization. User priority and
+the original intake/triage history remain unchanged. Recording a new action reopens
+the handling status without changing intake readiness.
+
+**Analyze case learning** sends a fixed evidence snapshot to the existing server-side
+SOCLAAS configuration. No additional key is required and `.env` is not changed. The
+Learning & Improvement Agent separates input gaps, agent errors, Pill gaps/errors,
+execution deviations and asset-specific findings. It can propose no change, more
+evidence, agent follow-up, a Pill update or a new Pill. It cannot publish or execute.
+The snapshot retains original Pill version, AI analysis, expert review and operational
+records, plus model/prompt metadata. At most five proposals per run and 65,000 input
+characters are accepted; oversized evidence is rejected rather than silently omitted.
+Provider errors allow retry and do not create partial proposals. Concurrent case edits
+reject the result, requiring a new analysis of the latest records.
+
+Knowledge proposals require exact citations to the current action and verified outcome,
+applicability/limitations and at least two proposed validation scenarios. Superseded
+records cannot be cited as current evidence. Quote validation verifies provenance, not
+engineering correctness or causal proof. Verification is explicitly self-declared by
+the human author, not independently measured by the application.
+
+Review proposals in **Pill Studio > Improvement queue**. Accept with reviewed text,
+reject, or request more information. Decisions are retained; updated evidence requires
+a new analysis. An accepted knowledge proposal can be imported once into a draft as
+an expert source and tracked implementation task. It does NOT automatically patch rules.
+The expert edits rules/actions/examples in Studio, saves, then confirms incorporation
+with rule references and rationale. Draft edits invalidate unreleased incorporation
+confirmations. Existing structural validation, expert approval and publication still
+apply. Releases snapshot the learning evidence, decisions and incorporation records.
+Import receipts live atomically in the Pill store; retries cannot duplicate sources.
+Importing an update requires the original Pill release version and an editable draft.
+
+Cases with no applicable Pill can still record expert handling and outcomes. A Triage
+result with adequate facts but no applicable rule is now `knowledge_gap`, not an invented
+request for more observations. Coverage distinguishes no Pill, no matched rule, missing
+facts, partial evidence and matched rules; matched rules are not a full-coverage guarantee.
+New non-AHU experience can be reviewed and retained, but runtime/draft publication remains
+AHU-only in this MVP. Agent/process proposals remain review records, not automatic code changes.
+
+APIs: `GET/POST /api/cases/:id/handling`, `POST /api/cases/:id/learning`,
+`GET /api/learning`, `POST /api/learning/:caseId/:runId/:proposalId/{review,apply}`,
+and `POST /api/studio/:id/incorporate-learning`. Mutations require revisions except
+idempotent import (which checks the target draft revision on first application).
+The local MVP has self-declared reviewers, not authentication or role-based access control.
+Tests use temporary stores and mocked providers; they do not alter saved cases or call
+the live model. Run `npm test` for backend and DOM interaction coverage.
+
+## Pill Library Version Management
+
+`/library` groups published versions by Pill, showing the active version separately
+from the latest release. Search includes historical content. `/library/:id` shows
+the current active version for that Pill (or its latest release if inactive), complete
+release history, immutable knowledge/source/example snapshots and approval provenance.
+Use `/library/:id/versions/:version` for a specific release and `/library/:id/compare`
+to compare two versions. Rules/actions align by ID; field changes show before/after
+values. Safety lists, sources, examples and capture/learning provenance are compared
+as complete values. Reordering rule/action records alone is not a content change.
+
+Published snapshots, active flags, disabled flags and audit events persist in the
+existing `PILL_DATA_FILE` (default `data/pills.json`) with atomic file replacement.
+New releases include a SHA-256 content checksum excluding mutable activation metadata;
+a stored checksum mismatch blocks reactivation. Legacy releases remain compatible,
+with a calculated checksum when no saved checksum exists. Checksums detect accidental
+changes, not malicious tampering by someone with write access to the storage file.
+Use one application process per data file; multi-process locking is not implemented.
+
+Version management requires an operator, reason, confirmation, the Pill revision and
+a global library state token. A concurrent publication, draft update or version switch
+invalidates old requests. **Activate this version / roll back** switches the single
+active AHU capability to an available published release. It does not create a new
+version, delete later releases, alter drafts or rewrite existing Case reports. New
+Triage runs use the selected release; review checks use the current active version.
+Publishing after rollback still allocates the next version, never reuses an old number.
+
+Only inactive versions can be disabled. Disabled releases remain inspectable and
+comparable but cannot activate. Restore makes a disabled release available without
+activating it; activation is a separate confirmed operation. No permanent deletion or
+automatic rollback is provided. Publication and activation history includes target,
+previous active release, timestamp, operator and reason. Reviewers/operators are still
+self-declared: authentication and role-based authorization remain outside this local MVP.
+
+APIs: `GET /api/library`, `GET /api/library/:id`,
+`GET /api/library/:id/compare?from=1.0.0&to=2.0.0`, and
+`POST /api/library/:id/versions/:version/{activate,disable,restore}`.
+Mutation body: `{revision, libraryToken, reviewer, notes, confirmed: true}`.
+Backend and DOM tests cover persistence/restart, legacy files, draft preservation,
+concurrent switches, source comparisons, error retries and Triage behavior after rollback.
