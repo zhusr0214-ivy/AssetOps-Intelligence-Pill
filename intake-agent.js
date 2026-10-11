@@ -72,7 +72,7 @@ function unknownTarget(messages, latest) {
   const sentences = latest.split(/[.!?。！？\r\n]+/);
 
   const explicitUnknownStart = sentences.some(sentence =>
-    /^(?:the\s+)?(?:start time|started at|occurred at)\s*(?::|is)\s*(?:unknown|not sure|not known)\s*$/i
+    /^(?:the\s+)?(?:(?:incident|case)\s+)?(?:start time|started at|occurred at)\s*(?::|is)\s*(?:unknown|not sure|not known)\s*$/i
       .test(sentence.trim())
   );
 

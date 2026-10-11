@@ -30,6 +30,14 @@ test('templates cannot bypass quote validation or add unselected hypotheses', ()
   assert.deepEqual(validateTriageResult(empty, snapshot, ahuPill).hypotheses, []);
 });
 
+test('duplicate case wording resolves to the specific structured source', () => {
+  const value = proposal('HVAC-01');
+  value.hypotheses[0].evidence[0].field = 'location';
+  const repeated = { fields: { description: 'The fan is running.', observations: 'The fan is running.' } };
+  const result = validateTriageResult(value, repeated, ahuPill);
+  assert.deepEqual(result.hypotheses[0].evidence[0], { field: 'observations', quote: 'The fan is running.' });
+});
+
 test('rendering uses the saved explanation and labels it separately from evidence', () => {
   const result = validateTriageResult(proposal('HVAC-03'), snapshot, ahuPill);
   const report = { ...result, snapshot, pill: structuredClone(ahuPill), status: 'complete', id: 'test', createdAt: '2026-10-08' };
