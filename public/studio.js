@@ -47,6 +47,61 @@ function readContent(form) {
   return content;
 }
 
+export function addReferenceHelpers(form) {
+  const targets = { rules: { actionIds: 'actions' }, actions: { ruleIds: 'rules' }, examples: { ruleIds: 'rules', actionIds: 'actions' } };
+  const rows = kind => [...form.querySelectorAll(`fieldset[data-kind="${kind}"]`)];
+  const appendId = (input, id) => {
+    const ids = input.value.split(',').map(value => value.trim()).filter(Boolean);
+    if (!ids.includes(id)) input.value = [...ids, id].join(', ');
+  };
+  for (const [kind, fields] of Object.entries(targets)) for (const row of rows(kind)) {
+    for (const [fieldName, targetKind] of Object.entries(fields)) {
+      const input = row.querySelector(`[name="${fieldName}"]`);
+      let helper = row.querySelector(`[data-reference-for="${fieldName}"]`);
+      if (!helper) {
+        helper = document.createElement('div');
+        helper.className = 'studio-reference-helper';
+        helper.dataset.referenceFor = fieldName;
+        input.closest('label').classList.add('studio-reference-field');
+        const select = document.createElement('select');
+        select.setAttribute('aria-label', `Choose ${targetKind === 'rules' ? 'rule' : 'action'} for ${kind.slice(0, -1)}`);
+        const button = document.createElement('button');
+        button.type = 'button'; button.textContent = 'Add selected';
+        button.addEventListener('click', () => {
+          if (!select.value) return;
+          appendId(input, select.value);
+          if (kind !== 'examples') {
+            const ownId = row.querySelector('[name="id"]').value.trim();
+            const other = rows(targetKind).find(item => item.querySelector('[name="id"]').value.trim() === select.value);
+            if (ownId && other) appendId(other.querySelector(`[name="${kind === 'rules' ? 'ruleIds' : 'actionIds'}"]`), ownId);
+          }
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+        helper.append(select, button);
+        input.closest('label').after(helper);
+      }
+      const select = helper.querySelector('select');
+      const previous = select.value;
+      const placeholder = document.createElement('option');
+      placeholder.textContent = `Choose ${targetKind === 'rules' ? 'rule' : 'action'}`;
+      placeholder.value = '';
+      select.replaceChildren(placeholder);
+      for (const item of rows(targetKind)) {
+        const id = item.querySelector('[name="id"]').value.trim();
+        if (!id) continue;
+        const title = item.querySelector('[name="title"]').value.trim();
+        const option = document.createElement('option');
+        option.textContent = title || id;
+        option.title = `${title || id} (${id})`;
+        option.value = id;
+        select.add(option);
+      }
+      select.value = previous && [...select.options].some(option => option.value === previous) ? previous : '';
+      helper.querySelector('button').disabled = select.options.length < 2;
+    }
+  }
+}
+
 export async function renderStudio(root, path, navigate) {
   const view = document.createElement('section'); root.replaceChildren(view);
   view.innerHTML = '<p role="status">Loading Pill Studio...</p>';
@@ -78,6 +133,7 @@ export async function renderStudio(root, path, navigate) {
         section.querySelectorAll('[data-incorporate]').forEach(form => form.onsubmit = event => { event.preventDefault(); operate('incorporate-learning', { proposalId: form.dataset.incorporate, ...Object.fromEntries(new FormData(form)), expertConfirmed: form.elements.expertConfirmed.checked }); });
       }
       const form = view.querySelector('#pill-editor');
+      if (form) addReferenceHelpers(form);
       if (candidates.length) {
         const section = document.createElement('details'); section.className = 'triage-section';
         section.innerHTML = `<summary>Related improvement candidates (${candidates.length})</summary>${candidates.map((c, index) => `<article class="studio-version"><a href="/cases/${e(c.incidentId)}/review">${e(c.incidentId)}</a><p>${e(c.notes)}</p>${c.proposals ? `<p>${e(c.proposals)}</p>` : ''}${form ? `<button type="button" data-source="${index}">Add to expert sources</button>` : ''}</article>`).join('')}`;
@@ -89,11 +145,14 @@ export async function renderStudio(root, path, navigate) {
         form.querySelector('[data-rows="sources"]').insertAdjacentHTML('beforeend', row('sources', { expert: '', reference: `${candidate.incidentId} / ${candidate.reviewId} / ${candidate.id}`, knowledge: [candidate.notes, candidate.proposals, ...(candidate.omittedActions || []).map(a => `${a.title}: ${a.reason}`)].filter(Boolean).join('\n') }));
         button.disabled = true; markDirty();
       });
-      form?.addEventListener('input', markDirty);
+      form?.addEventListener('input', event => {
+        markDirty();
+        if (event.target.name === 'id' || event.target.name === 'title') addReferenceHelpers(form);
+      });
       form?.addEventListener('click', event => {
         const add = event.target.closest('[data-add]');
-        if (add) { const kind = add.dataset.add; form.querySelector(`[data-rows="${kind}"]`).insertAdjacentHTML('beforeend', row(kind)); markDirty(); }
-        if (event.target.closest('[data-remove]')) { event.target.closest('.studio-row').remove(); markDirty(); }
+        if (add) { const kind = add.dataset.add; form.querySelector(`[data-rows="${kind}"]`).insertAdjacentHTML('beforeend', row(kind)); markDirty(); addReferenceHelpers(form); }
+        if (event.target.closest('[data-remove]')) { event.target.closest('.studio-row').remove(); markDirty(); addReferenceHelpers(form); }
       });
       form?.addEventListener('submit', event => { event.preventDefault(); operate('save', { content: readContent(form) }); });
       view.querySelectorAll('[data-operation]').forEach(button => button.onclick = () => operate(button.dataset.operation));

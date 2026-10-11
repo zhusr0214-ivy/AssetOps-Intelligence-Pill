@@ -20,11 +20,12 @@ test('handling route and new markup escape operational text and proposal content
   const i = incident(); i.title = '<script>bad</script>'; assert.ok(handlingMarkup(i).includes('&lt;script&gt;')); assert.ok(!handlingMarkup(i).includes('<script>'));
   const r = run(); r.proposals[0].after = '<img src=x onerror=bad()>'; assert.ok(!proposalMarkup(r, r.proposals[0]).includes('<img'));
   assert.ok(handlingMarkup(i).includes('data-record="action"')); assert.ok(handlingMarkup(i).includes('data-record="outcome"'));
+  assert.ok(handlingMarkup(i).indexOf('Step 1 · Record action') < handlingMarkup(i).indexOf('Step 2 · Record outcome'));
 });
 test('action submission preserves pending outcome draft and sends revision without executing equipment', async t => {
   let current = incident(), submitted;
   const { root, window } = browser(t, async (url, options) => {
-    if (options.method === 'POST') { submitted = JSON.parse(options.body); current = { ...current, revision: 4 }; }
+    if (options.method === 'POST') { submitted = JSON.parse(options.body); current = { ...current, revision: 4, handlingRecords: [{ ...submitted, id: 'OPS-saved' }] }; }
     return { incident: current, running: false };
   });
   await renderHandling(root, current.id);
@@ -35,6 +36,7 @@ test('action submission preserves pending outcome draft and sends revision witho
   await until(() => root.querySelector('[data-record="action"]') !== form);
   assert.equal(submitted.revision, 3); assert.equal(submitted.kind, 'action'); assert.equal(submitted.verified, false);
   assert.equal(root.querySelector('[data-record="outcome"]').elements.notes.value, 'Unsaved observation');
+  assert.match(root.querySelector('.handling-saved').textContent, /Saved action.*Action recorded/);
   root.querySelector('[data-analyze]').click(); assert.ok(root.querySelector('[role="alert"]').textContent.includes('Save pending'));
 });
 test('learning model failure retains recorded history and re-enables retry', async t => {

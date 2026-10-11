@@ -506,6 +506,10 @@ button:disabled { opacity: .5; cursor: default; }
 .case-stage .workspace-heading h2 { font-size: 22px; }
 @media (max-width: 700px) { .overview-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .studio-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-bottom: 16px; }
+.studio-reference-field, .studio-reference-helper { grid-column: 1 / -1; }
+.studio-reference-helper { display: flex; align-items: end; gap: 8px; min-width: 0; margin-top: -8px; }
+.studio-reference-helper select { min-width: 0; flex: 1; padding: 10px; border: 1px solid var(--line); border-radius: 4px; font: inherit; }
+.studio-reference-helper button { flex: none; }
 #pill-editor label, #pill-approval label, #new-pill label { display: grid; gap: 6px; min-width: 0; margin-block: 10px; }
 #pill-editor input, #pill-editor textarea, #pill-approval input, #pill-approval textarea, #new-pill input { width: 100%; padding: 10px; border: 1px solid var(--line); border-radius: 4px; font: inherit; }
 #pill-editor .studio-check, #pill-approval .studio-check { display: flex; align-items: baseline; gap: 10px; }
@@ -535,7 +539,9 @@ button:disabled { opacity: .5; cursor: default; }
 .version-diff pre, .version-evidence { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; }
 .version-hash { overflow-wrap: anywhere; }
 @media (max-width: 700px) { .version-diff { grid-template-columns: 1fr; } .version-controls { align-items: stretch; flex-direction: column; } }
-.handling-forms { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
+.handling-forms { display: grid; grid-template-columns: minmax(0, 1fr); gap: 24px; }
+.handling-saved { border: 1px solid #b8d4cb; border-left: 4px solid var(--teal); background: #f0f8f5; border-radius: 4px; padding: 14px 16px; margin: 16px 0; overflow-wrap: anywhere; }
+.handling-saved p { margin: 8px 0 0; }
 [data-record], [data-review], [data-apply], [data-incorporate] { min-width: 0; }
 [data-record] label, [data-review] label, [data-apply] label, [data-incorporate] label { display: grid; gap: 6px; margin-block: 12px; min-width: 0; }
 [data-record] input, [data-record] textarea, [data-record] select, [data-review] input, [data-review] textarea, [data-review] select, [data-apply] input, [data-incorporate] input, [data-incorporate] textarea { width: 100%; max-width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid var(--line); border-radius: 4px; font: inherit; }

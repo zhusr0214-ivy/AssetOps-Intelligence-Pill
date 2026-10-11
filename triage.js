@@ -169,8 +169,12 @@ export function validateTriageResult(value, snapshot, pill) {
           .map(findQuote)
           .filter(Boolean);
 
-        if (matches.length === 1) {
-          match = matches[0];
+        // The same user statement may appear in the description and a
+        // structured field. Both are valid sources; prefer the specific field.
+        if (matches.length) {
+          const preferred = ['observations', 'impact', 'actionsTaken', 'affectedScope', 'occurredAt', 'location', 'asset'];
+          const rank = field => preferred.includes(field) ? preferred.indexOf(field) : preferred.length;
+          match = matches.sort((a, b) => rank(a.field) - rank(b.field))[0];
         }
       }
 
