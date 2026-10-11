@@ -6,6 +6,9 @@ import { extractDocument } from './document-parser.js';
 import { createKnowledgeCaptureAgent } from './knowledge-agent.js';
 import { mergeKnowledge } from './knowledge-merge.js';
 import { libraryToken, releaseHash, compareReleases } from './pill-versions.js';
+import { routingErrors } from './pill-routing.js';
+import { validateSuite, evaluatePill, evaluationGate } from './pill-evaluation.js';
+import { createTriageAgent } from './triage-agent.js';
 
 const fail = (message, status = 422) => Object.assign(new Error(message), { status });
 const str = (value, max = 4000) => typeof value === 'string' && value.trim().length > 0 && value.length <= max;
@@ -21,7 +24,7 @@ export function validateDraft(content) {
   const check = (ok, message) => { if (!ok) errors.push(message); };
   const pill = content?.pill || {};
   for (const key of ['name', 'owner', 'source', 'scope']) check(str(pill[key]), `${key} is required (maximum 4000 characters).`);
-  check(pill.domain === 'ahu_cooling', 'This release supports the AHU cooling domain only.');
+  errors.push(...routingErrors(pill));
   check(array(content?.sources, 20), 'Add at least one expert knowledge source.');
   for (const source of content?.sources || []) {
     check(str(source?.expert, 120) && str(source?.reference, 1000) && str(source?.knowledge, 8000), 'Each source needs an expert, reference and captured knowledge.');
@@ -39,6 +42,7 @@ export function validateDraft(content) {
     check(array(rule?.actionIds, 20) && rule.actionIds.every(id => actionIds.has(id)), `Rule ${rule?.id || '?'} has missing or invalid action references.`);
   }
   for (const action of actions) {
+    if (action.coordinationKey || action.coordinationValue) check(str(action.coordinationKey, 120) && str(action.coordinationValue, 120), 'Coordination key and value must both be present (maximum 120 characters).');
     check(identifier(action?.id) && str(action?.title, 200) && str(action?.instruction, 2000) && str(action?.owner, 120) && typeof action?.requiresApproval === 'boolean', 'Each action needs an ID, title, instruction, owner and approval flag.');
     check(array(action?.ruleIds, 20) && action.ruleIds.every(id => ruleIds.has(id)), `Action ${action?.id || '?'} has missing or invalid rule references.`);
     for (const ruleId of action?.ruleIds || []) check(rules.find(r => r.id === ruleId)?.actionIds?.includes(action.id), `Action ${action.id} and rule ${ruleId} must reference each other.`);
@@ -63,12 +67,15 @@ function contentFrom(body, id) {
   if (JSON.stringify(body).length > 80000) throw fail('Draft is too large.');
   // Only authorable fields enter a draft; publication metadata is server-owned.
   const pick = (value, keys) => Object.fromEntries(keys.map(key => [key, value[key] ?? '']));
-  return { pill: { id, ...pick(body.pill, ['name', 'owner', 'source', 'scope', 'domain']), rules: body.pill.rules.map(r => pick(r, ['id', 'title', 'guidance', 'cardExplanation', 'actionIds'])), actions: body.pill.actions.map(a => pick(a, ['id', 'title', 'instruction', 'owner', 'requiresApproval', 'ruleIds'])), boundaries: body.pill.boundaries, escalationConditions: body.pill.escalationConditions }, sources: body.sources.map(s => pick(s, ['expert', 'reference', 'knowledge'])), examples: body.examples.map(s => pick(s, ['scenario', 'rationale', 'ruleIds', 'actionIds'])) };
+  const applicability = body.pill.applicability;
+  if (applicability !== undefined && routingErrors({ ...body.pill, domain: body.pill.domain || 'ahu_cooling' }).length) throw fail('Invalid routing criteria. Select categories and valid asset prefixes/keywords.');
+  return { pill: { id, ...pick(body.pill, ['name', 'owner', 'source', 'scope', 'domain']), ...(applicability ? { applicability: structuredClone(applicability) } : {}), rules: body.pill.rules.map(r => pick(r, ['id', 'title', 'guidance', 'cardExplanation', 'actionIds'])), actions: body.pill.actions.map(a => ({ ...pick(a, ['id', 'title', 'instruction', 'owner', 'requiresApproval', 'ruleIds']), ...(a.coordinationKey || a.coordinationValue ? pick(a, ['coordinationKey', 'coordinationValue']) : {}) })), boundaries: body.pill.boundaries, escalationConditions: body.pill.escalationConditions }, sources: body.sources.map(s => pick(s, ['expert', 'reference', 'knowledge'])), examples: body.examples.map(s => pick(s, ['scenario', 'rationale', 'ruleIds', 'actionIds'])) };
 }
 
-export function createPillStudio(file, { captureAgent = createKnowledgeCaptureAgent(), parser = extractDocument } = {}) {
+export function createPillStudio(file, { captureAgent = createKnowledgeCaptureAgent(), parser = extractDocument, evaluationAgent = createTriageAgent() } = {}) {
   let queue = Promise.resolve();
   const running = new Set();
+  const evaluating = new Set();
   const seed = () => [{ id: ahuPill.id, revision: 0, state: 'draft', content: { pill: { ...structuredClone(ahuPill), domain: 'ahu_cooling' }, sources: [], examples: [] }, releases: [], events: [], validation: null }];
   async function read() { try { const records = JSON.parse(await readFile(file, 'utf8')); if (!Array.isArray(records)) throw new Error('Invalid Pill storage.'); return records; } catch (error) { if (error.code === 'ENOENT') return seed(); throw error; } }
   function mutate(operation) {
@@ -84,14 +91,31 @@ export function createPillStudio(file, { captureAgent = createKnowledgeCaptureAg
   };
   const service = {
     list,
-    async active() { return (await list()).flatMap(r => r.releases).find(r => r.active && !r.disabled)?.pill || structuredClone(ahuPill); },
+    async evaluate(id, body) {
+      if (evaluating.has(id)) throw fail('Evaluation is already running.', 409);
+      evaluating.add(id);
+      try {
+        const record = find(await list(), id, body?.revision);
+        if (!validateDraft(record.content).passed) throw fail('Complete structural validation before model evaluation.');
+        const result = await evaluatePill(record, evaluationAgent);
+        await mutate(records => {
+          const current = records.find(r => r.id === id);
+          current.evaluations = [...(current.evaluations || []), result];
+          current.revision++; current.updatedAt = result.completedAt;
+          current.events.push({ action: 'evaluate', at: result.completedAt, runId: result.id, passed: result.passed });
+        });
+        return service.get(id);
+      } finally { evaluating.delete(id); }
+    },
+    async active(id) { const pills = await service.runtimePills(); return (id ? pills.find(p => p.id === id) : pills.at(-1)) || (id ? null : structuredClone(ahuPill)); },
+    async runtimePills() { const records = await list(), releases = records.flatMap(r => r.releases); return releases.length ? releases.filter(r => r.active && !r.disabled).map(r => r.pill) : [structuredClone(ahuPill)]; },
     async library() { return (await list()).flatMap(r => r.releases.map(v => ({ ...v.pill, active: v.active, disabled: Boolean(v.disabled), publishedAt: v.publishedAt, approvedBy: v.reviewer }))); },
     async versionHistory(id) {
       const records = await list(), record = records.find(r => r.id === id && r.releases.length);
       if (!record) throw fail('Published Pill not found.', 404);
       return {
         id, revision: record.revision, libraryToken: libraryToken(records), draftState: record.state,
-        active: records.flatMap(r => r.releases).filter(v => v.active).map(v => ({ id: v.pill.id, version: v.pill.version }))[0] || null,
+        active: record.releases.filter(v => v.active).map(v => ({ id: v.pill.id, version: v.pill.version }))[0] || null,
         releases: record.releases.map(v => ({ ...v, disabled: Boolean(v.disabled), contentHash: v.contentHash || releaseHash(v), checksumState: !v.contentHash ? 'legacy_calculated' : v.contentHash === releaseHash(v) ? 'verified' : 'mismatch' })),
         events: records.flatMap(r => r.events.filter(e => (e.action === 'publish' && r.id === id) || e.target?.id === id || (['publish', 'activate'].includes(e.action) && e.previous?.id === id)).map(e => ({ ...e, pillId: r.id }))).sort((a, b) => b.at.localeCompare(a.at))
       };
@@ -107,11 +131,11 @@ export function createPillStudio(file, { captureAgent = createKnowledgeCaptureAg
         if (!release) throw fail('Published version not found.', 404);
         if (body?.revision !== record.revision || body?.libraryToken !== libraryToken(records)) throw fail('Library changed. Reload before continuing.', 409);
         if (!str(body.reviewer, 120) || !str(body.notes, 3000) || body.confirmed !== true) throw fail('Operator, reason and explicit confirmation are required.');
-        const previous = records.flatMap(r => r.releases).find(v => v.active);
+        const previous = record.releases.find(v => v.active);
         if (operation === 'activate') {
           if (release.disabled || release.active) throw fail('Select an available, inactive published version.', 409);
           if (release.pill.status !== 'approved' || release.contentHash && release.contentHash !== releaseHash(release)) throw fail('This release failed its publication integrity check.', 409);
-          for (const r of records) for (const v of r.releases) v.active = false;
+          for (const v of record.releases) v.active = false;
           release.active = true;
         } else if (operation === 'disable') {
           if (release.active || release.disabled) throw fail('Switch the active version before disabling; already disabled versions cannot be disabled again.', 409);
@@ -125,7 +149,7 @@ export function createPillStudio(file, { captureAgent = createKnowledgeCaptureAg
         return { id, version, operation };
       });
     },
-    async get(id) { const record = (await list()).find(r => r.id === id); if (!record) throw fail('Pill not found.', 404); return { ...record, documents: (record.documents || []).map(d => ({ ...d, isRunning: running.has(`${id}/${d.id}`) })) }; },
+    async get(id) { const record = (await list()).find(r => r.id === id); if (!record) throw fail('Pill not found.', 404); return { ...record, evaluationGate: evaluationGate(record), evaluationRunning: evaluating.has(id), documents: (record.documents || []).map(d => ({ ...d, isRunning: running.has(`${id}/${d.id}`) })) }; },
     importLearning(input, body) {
       return mutate(records => {
         const { proposal: p, snapshot } = input;
@@ -141,10 +165,10 @@ export function createPillStudio(file, { captureAgent = createKnowledgeCaptureAg
           record = find(records, record.id, body?.revision);
         } else {
           const facts = JSON.parse(snapshot.blocks.find(b => b.id === 'case').text);
-          if (!(facts.category === 'hvac_cooling' || (facts.category === 'hvac' && /\bAHU\b/i.test(facts.asset)))) throw fail('New non-AHU capability remains a reviewed proposal. This MVP only supports AHU draft publication.');
+          const domain = facts.category === 'hvac' || facts.category === 'hvac_cooling' ? 'ahu_cooling' : facts.category === 'other' ? 'asset_operations' : facts.category;
           if (!str(body?.name, 200) || !str(body?.owner, 120)) throw fail('New Pill name and owner are required.');
           const id = `pill-${randomUUID().slice(0, 8)}`;
-          record = { id, revision: 0, state: 'draft', content: { pill: { id, name: body.name.trim(), owner: body.owner.trim(), source: '', scope: '', domain: 'ahu_cooling', rules: [], actions: [], boundaries: ['Advisory only. No equipment commands or work orders.'], escalationConditions: [] }, sources: [], examples: [] }, releases: [], events: [], validation: null };
+          record = { id, revision: 0, state: 'draft', content: { pill: { id, name: body.name.trim(), owner: body.owner.trim(), source: '', scope: '', domain, applicability: { categories: [facts.category], assetPrefixes: [], keywords: [] }, rules: [], actions: [], boundaries: ['Advisory only. No automatic equipment commands.'], escalationConditions: [] }, sources: [], examples: [] }, releases: [], events: [], validation: null };
           records.push(record);
         }
         if (record.content.sources.length >= 20) throw fail('This draft has reached its source limit.');
@@ -191,7 +215,7 @@ export function createPillStudio(file, { captureAgent = createKnowledgeCaptureAg
           const doc = record.documents?.find(d => d.id === documentId); if (!doc) throw fail('Source not found.', 404);
           if (['extracted', 'reviewed'].includes(doc.status)) throw fail('This source has already been extracted. Review the saved candidates.', 409);
           doc.status = 'analyzing'; doc.error = null; record.revision++; record.state = 'draft'; record.validation = null;
-          return structuredClone(doc);
+          return { ...structuredClone(doc), domain: record.content.pill.domain };
         });
         started = true;
         const result = await captureAgent(document);
@@ -245,7 +269,11 @@ export function createPillStudio(file, { captureAgent = createKnowledgeCaptureAg
         } else {
           if (record.state === 'published') throw fail('Create a new draft before editing a published Pill.', 409);
           if (['validate', 'submit', 'publish'].includes(operation) && record.documents?.some(d => running.has(`${id}/${d.id}`))) throw fail('Wait for knowledge extraction to finish before validating or publishing.', 409);
-          if (operation === 'incorporate-learning') {
+          if (operation === 'save-evaluations') {
+            if (body.content) { record.content = contentFrom(body.content, id); invalidateLearning(record); }
+            record.evaluationSuite = validateSuite(body.suite); record.evaluationRequired = true;
+            record.state = 'draft'; record.validation = null;
+          } else if (operation === 'incorporate-learning') {
             const item = record.learningImports?.find(v => v.proposalId === body.proposalId);
             if (!item || item.status !== 'pending_incorporation') throw fail('Pending learning import not found.', 409);
             if (!str(body.reviewer, 120) || !str(body.notes, 3000) || body.expertConfirmed !== true) throw fail('Expert confirmation and implementation notes are required.');
@@ -264,15 +292,18 @@ export function createPillStudio(file, { captureAgent = createKnowledgeCaptureAg
             if (record.state !== 'in_review' || !str(body.notes, 3000) || !str(body.reviewer, 120)) throw fail('Reviewer and return reason are required for a draft in review.');
             record.state = 'draft'; record.validation = null;
           } else if (operation === 'publish') {
+            if (evaluating.has(id)) throw fail('Wait for evaluation to finish before publishing.', 409);
+            if (evaluationGate(record).required && !evaluationGate(record).passed) throw fail('The current draft must pass its configured model evaluation before publication.');
             if (record.learningImports?.some(v => v.status === 'pending_incorporation')) throw fail('Confirm how imported learning was incorporated into rules and validation cases before publishing.');
             if (record.state !== 'in_review' || !validateDraft(record.content).passed) throw fail('Submit a valid draft for review before publishing.');
             if (!str(body.reviewer, 120) || !str(body.notes, 3000) || body.expertConfirmed !== true) throw fail('Reviewer, approval notes and expert confirmation are required.');
             const pill = { ...structuredClone(record.content.pill), status: 'approved', version: `${record.releases.length + 1}.0.0` };
-            const previous = records.flatMap(r => r.releases).find(v => v.active);
+            const previous = record.releases.find(v => v.active);
             activation = { target: { id, version: pill.version }, previous: previous ? { id: previous.pill.id, version: previous.pill.version } : null };
-            for (const r of records) for (const release of r.releases) release.active = false;
+            for (const release of record.releases) release.active = false;
             for (const item of record.learningImports || []) if (!item.releasedVersion) item.releasedVersion = pill.version;
             record.releases.push({ pill, sources: structuredClone(record.content.sources), examples: structuredClone(record.content.examples), learningImports: structuredClone(record.learningImports || []), captureHistory: structuredClone(record.captureHistory || []), validation: structuredClone(record.validation), reviewer: body.reviewer.trim(), identityVerified: false, notes: body.notes.trim(), publishedAt: now, active: true });
+            record.releases.at(-1).evaluation = record.evaluationRequired ? structuredClone(record.evaluations.at(-1)) : { state: 'not_enabled' };
             record.releases.at(-1).contentHash = releaseHash(record.releases.at(-1));
             record.state = 'published';
           } else throw fail('Unknown Studio operation.', 404);

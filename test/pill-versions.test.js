@@ -72,14 +72,16 @@ test('version mutations require explicit confirmation and reject stale or duplic
   assert.equal(results.find(r => r.status === 'rejected').reason.status, 409);
   await assert.rejects(studio.manageVersion(ahuPill.id, '1.0.0', 'activate', await body()), { status: 409 });
 });
-test('publication of another Pill invalidates a pending rollback and maintains one active capability', async t => {
+test('publication of another Pill invalidates stale library token but keeps one active version per Pill', async t => {
   const { studio, body } = await setup(t), stale = await body();
   const r = await studio.create({ name: 'Second AHU', owner: 'Expert' });
   await publish(studio, r.id, c => { c.pill = { ...structuredClone(ahuPill), id: r.id, domain: 'ahu_cooling' }; });
   await assert.rejects(studio.manageVersion(ahuPill.id, '1.0.0', 'activate', stale), { status: 409 });
   await studio.manageVersion(ahuPill.id, '1.0.0', 'activate', await body());
-  assert.equal((await studio.library()).filter(p => p.active).length, 1);
-  const otherHistory = await studio.versionHistory(r.id); assert.ok(otherHistory.events.some(e => e.action === 'activate' && e.previous.id === r.id));
+  assert.equal((await studio.library()).filter(p => p.active).length, 2);
+  const otherHistory = await studio.versionHistory(r.id); assert.equal(otherHistory.active.id, r.id);
+  assert.equal((await studio.runtimePills()).find(p => p.id === ahuPill.id).version, '1.0.0');
+  assert.ok(!otherHistory.events.some(e => e.action === 'activate'));
 });
 test('comparison aligns rule IDs, ignores object key ordering and exposes changed safety and evidence', async t => {
   const { studio } = await setup(t), result = await studio.compareVersions(ahuPill.id, '1.0.0', '2.0.0');
@@ -90,6 +92,18 @@ test('comparison aligns rule IDs, ignores object key ordering and exposes change
   b.pill.rules.pop(); b.pill.actions.push({ id: 'new-action', title: 'New check' }); b.sources.push({ expert: 'New source' });
   const diff = compareReleases(a, b); assert.ok(diff.changes.some(c => c.section === 'rules' && c.type === 'removed')); assert.ok(diff.changes.some(c => c.key === 'new-action' && c.type === 'added')); assert.ok(diff.changes.some(c => c.key === 'sources'));
   await assert.rejects(studio.compareVersions(ahuPill.id, 'missing', '2.0.0'), { status: 404 });
+});
+test('non-AHU published applicability survives restart and is included in version comparison', async t => {
+  const { studio, file } = await setup(t), draft = await studio.create({ name: 'Energy', owner: 'Expert' });
+  const scope = { categories: ['energy', 'hvac_cooling'], assetPrefixes: ['AHU-'], keywords: ['energy'] };
+  await publish(studio, draft.id, c => { c.pill = { ...structuredClone(ahuPill), id: draft.id, domain: 'energy', applicability: scope }; });
+  await publish(studio, draft.id, c => { c.pill.applicability.keywords.push('demand'); });
+  const restarted = createPillStudio(file), active = await restarted.runtimePills();
+  assert.equal(active.length, 2); assert.equal(active.find(p => p.id === draft.id).domain, 'energy');
+  const comparison = await restarted.compareVersions(draft.id, '1.0.0', '2.0.0'); assert.ok(comparison.changes.some(c => c.key === 'applicability'));
+  const history = await restarted.versionHistory(draft.id);
+  await restarted.manageVersion(draft.id, '1.0.0', 'disable', { revision: history.revision, libraryToken: history.libraryToken, reviewer: 'Expert', notes: 'Old scope', confirmed: true });
+  assert.equal((await restarted.runtimePills()).find(p => p.id === draft.id).version, '2.0.0');
 });
 test('older stored releases without management fields remain readable and can be activated', async t => {
   const { file } = await setup(t); const records = JSON.parse(await readFile(file, 'utf8'));

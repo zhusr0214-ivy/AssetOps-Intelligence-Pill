@@ -1,4 +1,4 @@
-export const learningPromptVersion = 'governed-learning-v1';
+export const learningPromptVersion = 'governed-learning-v2-targeted';
 const fail = message => Object.assign(new Error(message), { status: 502 });
 const str = (v, max = 3000) => typeof v === 'string' && v.trim().length > 0 && v.length <= max;
 const strings = v => Array.isArray(v) && v.length <= 10 && v.every(s => str(s));
@@ -8,6 +8,7 @@ const prompt = `You are the Learning & Improvement Agent. Analyze the supplied i
 Return JSON only: {summary, questions: [], proposals: [{title, cause, disposition, reason, before, after, applicability, limitations, validationCases: [], evidence: [{blockId, quote}]}]}.
 Use 0-5 proposals. cause: input_gap, agent_error, pill_gap, pill_error, execution_deviation, asset_specific, no_change. disposition: no_change, collect_evidence, agent_improvement, update_pill, new_pill.
 Separate reported facts, AI advice, human approval, actual actions and verified outcomes. Do not infer execution from approval, causality from recovery, or general applicability from a single asset. Correct rules misused by AI need agent improvement, not duplicated knowledge. Insufficient evidence needs questions/collect_evidence, not a claimed validated solution.
+For update_pill, target only snapshot.pill (the top-level pill object), which may be one selected specialist from a multi-Pill report. Do not propose updates to the runtime bundle or silently switch to another specialist. Task assignment, progress and verification events are supporting operational context, not a substitute for actual-action and outcome evidence.
 Each proposal needs 1-6 exact contiguous quotes from identified source blocks that support its claims, including actual handling/outcome evidence for knowledge changes. Preserve negations and uncertainty. before identifies the existing knowledge or explicitly its absence; after is a proposed change only. Specify applicability and limitations. validationCases contains both an applicable scenario and a counterexample for knowledge changes; these are proposed tests, not executed tests. No invented outcomes, thresholds or approvals. No tools, equipment execution or publication. Strings max 3000 chars, title max 200. questions and validationCases max 10 strings. Use the case language.`;
 
 export function validateLearning(value, snapshot) {

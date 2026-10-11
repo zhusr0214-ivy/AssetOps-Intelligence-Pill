@@ -2,13 +2,14 @@ import { readFileSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { assessIntake, fields, priorities } from './intake.js';
 import { createTriageAgent, createTriageChat, triagePromptVersion } from './triage-agent.js';
+import { matchedPills, bundlePills, scopedId, actionConflicts } from './pill-routing.js';
 
 export const ahuPill = JSON.parse(readFileSync(new URL('./pills/ahu-cooling.json', import.meta.url), 'utf8'));
 const fail = (message, status = 422) => Object.assign(new Error(message), { status });
 const requestedFields = ['asset', 'observations', 'affectedScope', 'occurredAt', 'impact'];
 const unknown = value => !value || /^(?:unknown|not sure|n\/a|\u4e0d\u77e5\u9053|\u4e0d\u6e05\u695a|\u672a\u77e5)[.!\u3002]?$/i.test(value.trim());
 const questions = {
-  asset: 'Confirm the affected AHU identifier with the site team before running an AHU-specific analysis.',
+  asset: 'Confirm the affected asset identifier with the site team before running an asset-specific analysis.',
   observations: 'Provide available temperature readings, setpoint, alarms or other observed equipment conditions.',
   affectedScope: 'Confirm the affected areas and any nearby areas that are operating normally.',
   occurredAt: 'Confirm when the issue started, if known.',
@@ -94,10 +95,10 @@ export function validateTriageResult(value, snapshot, pill) {
   if (!text(value.summary)) {
     invalid('summary must be nonempty text, up to 2000 characters.');
   }
-  if (!list(value.hypotheses, 3)) {
+  if (!list(value.hypotheses, 3 * (pill.members?.length || 1))) {
     invalid('hypotheses must be an array with at most 3 items.');
   }
-  if (!list(value.actionIds, 5)) {
+  if (!list(value.actionIds, 5 * (pill.members?.length || 1))) {
     invalid('actionIds must be an array with at most 5 items.');
   }
   if (!list(value.missingFields, 5)) {
@@ -138,7 +139,7 @@ export function validateTriageResult(value, snapshot, pill) {
       if (!text(evidence.quote, 1000)) {
         invalid(`${evidenceLabel}: quote is missing or exceeds 1000 characters.`);
       }
-                  const quote = evidence.quote;
+      const quote = evidence.quote;
       const foldCase = text =>
         text.replace(/[A-Z]/g, letter => letter.toLowerCase());
 
@@ -159,7 +160,7 @@ export function validateTriageResult(value, snapshot, pill) {
       // Check the named field first.
       let match = findQuote(evidence.field);
 
-      // Correct a mislabeled source only when one other field matches.
+      // Repair the field only when the source can be identified without ambiguity.
       if (!match) {
         const matches = fields
           .filter(field =>
@@ -169,9 +170,10 @@ export function validateTriageResult(value, snapshot, pill) {
           .map(findQuote)
           .filter(Boolean);
 
-        // The same user statement may appear in the description and a
-        // structured field. Both are valid sources; prefer the specific field.
-        if (matches.length) {
+        // Equal substrings (e.g. a temperature) can describe different facts.
+        // Prefer structured fields only when their complete source texts agree.
+        const sourceTexts = new Set(matches.map(item => foldCase(snapshot.fields[item.field].trim())));
+        if (matches.length && sourceTexts.size === 1) {
           const preferred = ['observations', 'impact', 'actionsTaken', 'affectedScope', 'occurredAt', 'location', 'asset'];
           const rank = field => preferred.includes(field) ? preferred.indexOf(field) : preferred.length;
           match = matches.sort((a, b) => rank(a.field) - rank(b.field))[0];
@@ -266,9 +268,10 @@ export function createTriageService(store, agent = createTriageAgent(), model = 
   const running = new Map();
   return {
     async list() {
+      const available = await currentPill();
       return (await store.list()).filter(item => item.status === 'ready_for_triage' || item.triageReports?.length || running.has(item.id)).map(item => ({
         id: item.id, title: item.title, asset: item.asset, location: item.location, priority: item.priority, category: item.category,
-        eligible: canAnalyze(item), supported: Boolean(selectPill(item)), running: running.get(item.id) || null,
+        eligible: canAnalyze(item), supported: matchedPills(item, available).length > 0, running: running.get(item.id) || null,
         latest: item.triageReports?.length ? reportView(item.triageReports.at(-1), item) : null
       }));
     },
@@ -276,7 +279,8 @@ export function createTriageService(store, agent = createTriageAgent(), model = 
       const incident = (await store.list()).find(item => item.id === id);
       if (!incident) throw fail('Incident not found.', 404);
       const { triageReports = [], ...caseData } = incident;
-      return { incident: caseData, eligible: canAnalyze(incident), supported: Boolean(selectPill(incident)), running: running.get(id) || null, reports: triageReports.map(report => reportView(report, incident)) };
+      const matches = matchedPills(incident, await currentPill());
+      return { incident: caseData, eligible: canAnalyze(incident), supported: matches.length > 0, matches: matches.map(({ pill, reasons }) => ({ id: pill.id, name: pill.name, version: pill.version, domain: pill.domain || 'ahu_cooling', reasons })), running: running.get(id) || null, reports: triageReports.map(report => reportView(report, incident)) };
     },
     async run(id, revision) {
       const activePill = await currentPill();
@@ -285,29 +289,48 @@ export function createTriageService(store, agent = createTriageAgent(), model = 
       if (running.has(id)) throw fail('An analysis is already running for this case.', 409);
       if (!Number.isInteger(revision) || revision !== (incident.revision || 0)) throw fail('The case changed. Reload before analyzing.', 409);
       if (!canAnalyze(incident)) throw fail('Confirm intake and resolve pending information before analyzing.', 409);
+      const matches = matchedPills(incident, activePill);
+      if (matches.length > 5) throw fail('More than five Pills match. Narrow approved applicability criteria before analyzing.', 409);
       const snapshot = { id, revision, fields: Object.fromEntries(fields.map(key => [key, incident[key] || ''])) };
-      const report = { id: `TRI-${randomUUID()}`, createdAt: new Date().toISOString(), snapshot, caseFingerprint: caseFingerprint(incident), pill: selectPill(incident) ? structuredClone(activePill) : null, model: null, promptVersion: triagePromptVersion };
+      const report = { id: `TRI-${randomUUID()}`, createdAt: new Date().toISOString(), snapshot, caseFingerprint: caseFingerprint(incident), pill: bundlePills(matches.map(m => m.pill)), routing: matches.map(m => ({ id: m.pill.id, version: m.pill.version, reasons: m.reasons })), sourcePills: structuredClone(matches.map(m => m.pill)), model: null, promptVersion: triagePromptVersion };
       running.set(id, { id: report.id, startedAt: report.createdAt });
       try {
         const missing = ['asset', 'observations'].filter(field => unknown(incident[field]));
         if (!report.pill) {
           Object.assign(report, { status: 'out_of_scope', summary: 'No applicable Pill is available for this incident category. Refer the case to the responsible domain specialist.', hypotheses: [], actions: [], missingFields: [], prioritySuggestion: null });
         } else if (missing.length) {
-          Object.assign(report, { status: 'needs_information', summary: 'Additional case information is needed before an AHU analysis can be grounded in evidence.', hypotheses: [], actions: [], missingFields: missing, prioritySuggestion: null });
+          Object.assign(report, { status: 'needs_information', summary: 'Additional asset and observation information is needed before analysis can be grounded in evidence.', hypotheses: [], actions: [], missingFields: missing, prioritySuggestion: null });
         } else {
           report.model = model;
           try {
-            const result = validateTriageResult(await agent(snapshot, report.pill), snapshot, report.pill);
-            Object.assign(report, result, { status: result.missingFields.length ? 'needs_information' : !result.hypotheses.length ? 'knowledge_gap' : 'complete' });
+            if (matches.length === 1) {
+              const result = validateTriageResult(await agent(snapshot, report.pill), snapshot, report.pill);
+              Object.assign(report, result, { status: result.missingFields.length ? 'needs_information' : !result.hypotheses.length ? 'knowledge_gap' : 'complete' });
+            } else {
+              const specialists = [];
+              for (const { pill } of matches) {
+                try {
+                  const result = validateTriageResult(await agent(snapshot, pill), snapshot, pill);
+                  specialists.push({ pillId: pill.id, version: pill.version, name: pill.name, ...result, status: result.missingFields.length ? 'needs_information' : result.hypotheses.length ? 'complete' : 'knowledge_gap' });
+                } catch (error) { specialists.push({ pillId: pill.id, version: pill.version, name: pill.name, status: 'failed', error: error.status ? error.message : 'Specialist analysis failed.', hypotheses: [], actions: [], missingFields: [] }); }
+              }
+              const hypotheses = specialists.flatMap(s => s.hypotheses.map(h => ({ ...h, ruleId: scopedId({ id: s.pillId }, h.ruleId) })));
+              const selectedIds = new Set(specialists.flatMap(s => s.actions.map(a => scopedId({ id: s.pillId }, a.id))));
+              const actions = report.pill.actions.filter(a => selectedIds.has(a.id));
+              const missingFields = [...new Set(specialists.flatMap(s => s.missingFields))];
+              const conflicts = actionConflicts(actions);
+              const status = specialists.some(s => s.status === 'failed') ? 'partial_failure' : specialists.some(s => s.status === 'knowledge_gap') ? 'knowledge_gap' : missingFields.length ? 'needs_information' : 'complete';
+              Object.assign(report, { status, specialists, hypotheses, actions, missingFields, summary: specialists.map(s => `${s.name}: ${s.summary || s.error}`).join('\n').slice(0, 2000), prioritySuggestion: null, coordination: { required: true, conflicts, semanticConflictCheck: 'Human review required; only declared coordination keys are automatically compared.' } });
+            }
           } catch (error) {
             Object.assign(report, { status: 'failed', error: error.status ? error.message : 'Analysis failed. Retry the request.', summary: '', hypotheses: [], actions: [], missingFields: [], prioritySuggestion: null });
           }
         }
         report.questions = report.missingFields.map(field => ({ field, question: questions[field] }));
         report.coverage = {
-          status: report.status === 'out_of_scope' ? 'no_pill' : report.status === 'knowledge_gap' ? 'no_matching_rule' : report.status === 'failed' ? 'not_assessed' : report.missingFields.length ? report.hypotheses.length ? 'partial' : 'insufficient_facts' : 'rules_matched',
+          status: report.status === 'out_of_scope' ? 'no_pill' : report.status === 'knowledge_gap' ? 'no_matching_rule' : report.status === 'failed' ? 'not_assessed' : report.status === 'partial_failure' ? 'partial' : report.missingFields.length ? report.hypotheses.length ? 'partial' : 'insufficient_facts' : 'rules_matched',
           matchedRuleIds: report.hypotheses.map(h => h.ruleId),
-          expertHandlingRequired: ['out_of_scope', 'knowledge_gap'].includes(report.status),
+          expertHandlingRequired: ['out_of_scope', 'knowledge_gap', 'partial_failure'].includes(report.status) || Boolean(report.coordination?.conflicts.length),
           fullCoverageVerified: false
         };
         report.governance = {

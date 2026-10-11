@@ -494,6 +494,19 @@ button:disabled { opacity: .5; cursor: default; }
 .review-history small { overflow-wrap: anywhere; }
 @media (max-width: 700px) { .review-grid { grid-template-columns: 1fr; } }
 .workspace-tabs { display: flex; flex-wrap: wrap; gap: 4px 24px; border-bottom: 1px solid var(--line); margin: 0 0 24px; }
+.evaluation-panel label { display: grid; gap: 6px; margin: 12px 0; min-width: 0; }
+.operations-filters label { display: grid; gap: 6px; margin: 12px 0; min-width: 0; }
+.operations-filters input, .operations-filters select { width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid var(--line); border-radius: 4px; font: inherit; }
+.evaluation-panel input, .evaluation-panel textarea, .evaluation-panel select { width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid var(--line); border-radius: 4px; font: inherit; }
+.operational-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
+.operational-metrics > div { min-width: 0; border-bottom: 1px solid var(--line); padding-bottom: 16px; overflow-wrap: anywhere; }
+.operational-metrics dd { margin: 8px 0; font-size: 22px; font-weight: 600; }
+.task-detail label, .task-create label { display: grid; gap: 6px; margin-block: 12px; min-width: 0; }
+.task-detail input, .task-detail select, .task-detail textarea, .task-create input, .task-create select, #pill-editor select { width: 100%; max-width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid var(--line); border-radius: 4px; font: inherit; }
+.task-detail .review-check { display: flex; align-items: baseline; }
+.task-detail input[type="checkbox"] { width: auto; }
+.task-detail { overflow-wrap: anywhere; }
+@media (max-width: 700px) { .operational-metrics { grid-template-columns: 1fr; } }
 .workspace-tabs a { padding: 12px 0; border-bottom: 3px solid transparent; color: var(--muted); text-decoration: none; }
 .workspace-tabs a[aria-current="page"] { color: var(--ink); border-bottom-color: var(--teal); font-weight: 600; }
 .workspace-tabs a:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }

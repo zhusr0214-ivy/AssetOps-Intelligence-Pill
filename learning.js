@@ -19,7 +19,21 @@ export function learningSnapshot(incident) {
   if (report) add('triage', 'analysis', { ...report, chat: undefined, stale: report.caseFingerprint !== caseFingerprint(incident) });
   for (const r of incident.reviews || []) add(r.id, 'review', r);
   for (const r of records) add(r.id, r.kind, r);
+  for (const task of incident.tasks || []) add(task.id, 'task', task);
   return { caseId: incident.id, revision: incident.revision || 0, capturedAt: now(), pill: report?.pill || null, verifiedOutcome, currentOutcomeId: outcome?.id || null, currentActionId: latestAction?.id || null, blocks };
+}
+
+export function learningEvidenceCurrent(incident, run, proposal) {
+  if (!['update_pill', 'new_pill'].includes(proposal.disposition)) return true;
+  const current = learningSnapshot(incident), saved = run.snapshot;
+  if (!saved || !current.verifiedOutcome || current.currentActionId !== saved.currentActionId || current.currentOutcomeId !== saved.currentOutcomeId) return false;
+  if (current.blocks.find(b => b.id === 'case')?.text !== saved.blocks.find(b => b.id === 'case')?.text) return false;
+  const reportId = snapshot => { const block = snapshot.blocks.find(b => b.id === 'triage'); return block ? JSON.parse(block.text).id : null; };
+  if (reportId(current) !== reportId(saved)) return false;
+  return proposal.evidence.every(ref => {
+    const block = current.blocks.find(b => b.id === ref.blockId), original = saved.blocks.find(b => b.id === ref.blockId);
+    return block && !block.superseded && original && block.text === original.text;
+  });
 }
 
 export function createLearningService(store, studio, agent = createLearningAgent()) {
@@ -35,7 +49,7 @@ export function createLearningService(store, studio, agent = createLearningAgent
     async get(id) { return { incident: await get(id), running: running.has(id) }; },
     async list() {
       const imports = (await studio.list()).flatMap(r => (r.learningImports || []).map(v => ({ ...v, pillId: r.id, pillState: r.state })));
-      return (await store.list()).flatMap(i => (i.learningRuns || []).map(run => ({ ...run, snapshot: undefined, incidentId: i.id, title: i.title, revision: i.revision || 0, proposals: run.proposals.map(p => ({ ...p, imported: imports.find(v => v.proposalId === p.id) || null })) })));
+      return (await store.list()).flatMap(i => (i.learningRuns || []).map(run => ({ ...run, snapshot: undefined, incidentId: i.id, title: i.title, revision: i.revision || 0, proposals: run.proposals.map(p => ({ ...p, staleEvidence: !learningEvidenceCurrent(i, run, p), imported: imports.find(v => v.proposalId === p.id) || null })) })));
     },
     async record(id, body) {
       const i = await get(id); check(i, body?.revision);
@@ -60,6 +74,11 @@ export function createLearningService(store, studio, agent = createLearningAgent
       if (running.has(id)) throw fail('Learning analysis is already running.', 409);
       if (!i.handlingRecords?.length && !i.reviews?.length) throw fail('Add operational records or expert corrections before learning.');
       const snapshot = learningSnapshot(i);
+      if (i.triageReports?.at(-1)?.sourcePills?.length > 1) {
+        const target = i.triageReports.at(-1).sourcePills.find(p => p.id === body.targetPillId);
+        if (!target) throw fail('Choose the original specialist Pill to improve.');
+        snapshot.pill = structuredClone(target);
+      }
       if (JSON.stringify(snapshot).length > 65000) throw fail('Case evidence exceeds the MVP learning limit. No evidence was silently omitted.');
       running.add(id);
       try {
@@ -71,10 +90,11 @@ export function createLearningService(store, studio, agent = createLearningAgent
     },
     async decide(id, runId, proposalId, body) {
       const i = await get(id); check(i, body?.revision);
-      const { proposal } = find(i, runId, proposalId);
+      const { run, proposal } = find(i, runId, proposalId);
       if (proposal.decision) throw fail('This proposal already has a decision. Re-analyze updated evidence for a new proposal.', 409);
       if (!['accepted', 'rejected', 'needs_information'].includes(body.decision) || !str(body.reviewer, 120) || !str(body.notes)) throw fail('Reviewer, decision and rationale are required.');
       if (body.decision === 'accepted' && (body.confirmed !== true || !str(body.reviewedAfter))) throw fail('Confirm the evidence and provide the reviewed proposal text.');
+      if (body.decision === 'accepted' && !learningEvidenceCurrent(i, run, proposal)) throw fail('Learning evidence changed. Analyze the latest facts and outcomes before accepting this knowledge.', 409);
       proposal.decision = { status: body.decision, reviewer: body.reviewer.trim(), identityVerified: false, notes: body.notes.trim(), reviewedAfter: body.decision === 'accepted' ? body.reviewedAfter.trim() : null, at: now() };
       await store.update(id, { learningRuns: i.learningRuns }, body.revision);
       return proposal;
@@ -82,6 +102,7 @@ export function createLearningService(store, studio, agent = createLearningAgent
     async apply(id, runId, proposalId, body) {
       const i = await get(id), { run, proposal } = find(i, runId, proposalId);
       if (proposal.decision?.status !== 'accepted' || !['update_pill', 'new_pill'].includes(proposal.disposition)) throw fail('Only accepted knowledge proposals can enter Pill drafts.');
+      if (!learningEvidenceCurrent(i, run, proposal)) throw fail('Learning evidence changed. Re-analyze before importing knowledge.', 409);
       // The Pill store owns the import receipt. No second-file write can leave a half-applied proposal.
       return studio.importLearning({ caseId: id, runId, proposal, snapshot: run.snapshot }, body);
     }

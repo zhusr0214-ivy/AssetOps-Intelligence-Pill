@@ -12,6 +12,8 @@ import { createReviewService } from './review.js';
 import { createPillStudio } from './pill-studio.js';
 import { uploadLimit } from './document-parser.js';
 import { createLearningService } from './learning.js';
+import { createTaskService } from './tasks.js';
+import { operationsMetrics, operationsCSV } from './operations-metrics.js';
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const publicDir = join(__dirname, "public");
@@ -83,13 +85,27 @@ async function readBody(req) {
 
 export function createHandler(store = createIncidentStore(process.env.DATA_FILE || join(__dirname, 'data/incidents.json')), intakeAgent = createIntakeAgent(), triageAgent, studio = createPillStudio(process.env.PILL_DATA_FILE || join(__dirname, 'data/pills.json')), learningAgent) {
  const busyCases = new Set();
- const triage = createTriageService(store, triageAgent, undefined, undefined, () => studio.active());
- const review = createReviewService(store, () => studio.active());
+ const triage = createTriageService(store, triageAgent, undefined, undefined, () => studio.runtimePills());
+ const review = createReviewService(store, () => studio.runtimePills());
  const learning = createLearningService(store, studio, learningAgent);
+ const tasks = createTaskService(store, () => studio.runtimePills());
  return async (req, res) => {
  try {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const path = url.pathname;
+  if (['/api/operations', '/api/operations/export'].includes(path) && req.method === 'GET') {
+    const data = operationsMetrics(await store.list(), Object.fromEntries(url.searchParams));
+    if (path.endsWith('/export')) { res.writeHead(200, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="assetops-operations.csv"', 'Cache-Control': 'no-store' }); return res.end(operationsCSV(data)); }
+    return sendJson(res, 200, data);
+  }
+  if (path === '/api/tasks' && req.method === 'GET') return sendJson(res, 200, { tasks: await tasks.list() });
+  const taskMatch = path.match(/^\/api\/cases\/([^/]+)\/tasks(?:\/([^/]+))?$/);
+  if (taskMatch) {
+    const [, id, taskId] = taskMatch;
+    if (req.method === 'GET' && !taskId) return sendJson(res, 200, await tasks.get(id));
+    if (req.method === 'POST') return sendJson(res, taskId ? 200 : 201, { task: taskId ? await tasks.update(id, taskId, await readBody(req)) : await tasks.create(id, await readBody(req)) });
+    return sendJson(res, 405, { error: 'Method not allowed.' });
+  }
   const handlingMatch = path.match(/^\/api\/cases\/([^/]+)\/(handling|learning)$/);
   if (handlingMatch) {
     const [, id, operation] = handlingMatch;
@@ -131,7 +147,9 @@ export function createHandler(store = createIncidentStore(process.env.DATA_FILE 
     if (req.method === 'POST' && operation === 'merge') return sendJson(res, 200, { record: await studio.merge(pillId, documentId, await readBody(req)) });
     return sendJson(res, 405, { error: 'Method not allowed.' });
   }
-  const studioMatch = path.match(/^\/api\/studio\/([^/]+)(?:\/(save|validate|submit|publish|return|fork|incorporate-learning))?$/);
+  const evaluationMatch = path.match(/^\/api\/studio\/([^/]+)\/evaluate$/);
+  if (evaluationMatch && req.method === 'POST') return sendJson(res, 200, { record: await studio.evaluate(evaluationMatch[1], await readBody(req)) });
+  const studioMatch = path.match(/^\/api\/studio\/([^/]+)(?:\/(save|validate|submit|publish|return|fork|incorporate-learning|save-evaluations))?$/);
   if (studioMatch) {
     if (req.method === 'GET' && !studioMatch[2]) return sendJson(res, 200, { record: await studio.get(studioMatch[1]) });
     if (req.method === 'POST' && studioMatch[2]) return sendJson(res, 200, { record: await studio.change(studioMatch[1], studioMatch[2], await readBody(req)) });

@@ -4,14 +4,14 @@ Asset Operations workspace organized around cases and reusable domain knowledge.
 
 ## Sections
 
-1. Operations Overview: live case, review and knowledge counts.
-2. Case Workspace: intake, analysis and human review within one case.
-3. Pill Studio: existing demo drafts and review-derived improvement candidates.
+1. Operations Overview: case counts, operational metrics, task reminders and version outcomes.
+2. Case Workspace: intake, multi-Pill analysis, human review, tasks, actual actions and outcomes.
+3. Pill Studio: domain knowledge capture, reviewed drafts and governed improvement candidates.
 4. Pill Library: approved capabilities only.
 
 Pill Studio supports expert sources, structured drafts, reference/example validation,
-expert review, publication and immutable version history. Rollback and case execution/
-outcome capture remain future work. The seeded demo remains unpublished until a user
+expert review, publication, immutable version history and rollback. Case handling and
+outcomes are recorded by people, not inferred from approval. The seeded demo remains unpublished until a user
 completes its expert sources/examples and approves it through Studio.
 
 ## Run
@@ -69,7 +69,7 @@ The summary stays editable through Edit summary. Sending a message or saving a f
 - `triage.js`: scope matching, case snapshots, deterministic validation and report orchestration.
 - `pills/ahu-cooling.json`: versioned, illustrative AHU cooling knowledge. It is explicitly **demo-only**, project-authored and not approved engineering advice. Review it with a domain expert before operational use.
 
-Supported: `hvac_cooling`, or general `hvac` with an AHU asset identifier. Other categories return an explicit out-of-scope report without calling a model. An unconfirmed AHU or missing observations produces information requests. All cases must have confirmed intake, with no unresolved conflicts or messages.
+Without published knowledge, the legacy demo supports `hvac_cooling`, or general `hvac` with an AHU asset identifier. Published Pills use their approved applicability criteria (see Multi-Pill Operations below). Unmatched cases return an explicit out-of-scope report without calling a model. An unconfirmed asset or missing observations produces information requests. All cases must have confirmed intake, with no unresolved conflicts or messages.
 
 The model proposes hypotheses and selects rule/action IDs. The backend verifies that rule IDs exist, quoted evidence occurs in the case, and actions belong to cited rules. Action instructions and approval requirements come from the Pill catalog, never model-supplied text. These checks do not verify the semantic correctness of a diagnosis. No equipment commands, work orders, approval actions, human-review endpoints or autonomous execution are implemented. Priority suggestions never modify the user's priority.
 
@@ -193,21 +193,22 @@ semantic contradiction. Experts must assess source quality and operating context
 
 ## Pill Studio MVP
 
-Open `/studio` to create an AHU cooling capability or edit the seeded demo. Add expert
+Open `/studio` to create a domain capability or edit the seeded AHU demo. Add expert
 sources (contributor, reference and captured experience), decision rules, an action
 catalog, boundaries, escalation conditions and example cases. Save, validate, submit
 for expert review, then return for changes or approve and publish. Unsaved edits cannot
 be validated or published. Every saved edit invalidates prior validation.
 
-Validation checks required content, unique IDs, reciprocal rule/action links and
-example references. It does not run examples through an LLM or establish engineering
-correctness. The reviewer must explicitly confirm the knowledge before publication.
+Structural validation checks required content, unique IDs, reciprocal rule/action links
+and example references. The separate Model evaluation panel runs authored test cases
+through the configured Triage model. Neither establishes engineering correctness.
+The reviewer must explicitly confirm the knowledge before publication.
 Reviewer identity is self-declared; authentication/role enforcement remains future work.
 
 Published snapshots retain sources, examples, validation and approval notes. Editing
 requires a new draft; releases receive monotonically increasing versions per Pill.
-Publication activates that version as the single AHU capability for subsequent Triage
-runs, replacing the previously active AHU release. Drafts never affect runtime knowledge.
+Publication activates that version for its Pill, replacing only that Pill's previously
+active release. Multiple Pills may be active together. Drafts never affect runtime knowledge.
 With no publication the application continues to use its original demo Pill. Library
 shows published versions and marks the active one. Historical reports retain their
 original Pill snapshot; review of a report with a superseded definition is blocked.
@@ -316,8 +317,10 @@ Cases with no applicable Pill can still record expert handling and outcomes. A T
 result with adequate facts but no applicable rule is now `knowledge_gap`, not an invented
 request for more observations. Coverage distinguishes no Pill, no matched rule, missing
 facts, partial evidence and matched rules; matched rules are not a full-coverage guarantee.
-New non-AHU experience can be reviewed and retained, but runtime/draft publication remains
-AHU-only in this MVP. Agent/process proposals remain review records, not automatic code changes.
+Reviewed non-AHU experience can create a scoped draft; it must still pass source,
+rule, example and expert review requirements before publication. Agent/process proposals
+remain review records, not automatic code changes. Multi-Pill learning requires selecting
+the original specialist Pill to update; the runtime bundle is never itself published.
 
 APIs: `GET/POST /api/cases/:id/handling`, `POST /api/cases/:id/learning`,
 `GET /api/learning`, `POST /api/learning/:caseId/:runId/:proposalId/{review,apply}`,
@@ -348,8 +351,8 @@ Use one application process per data file; multi-process locking is not implemen
 
 Version management requires an operator, reason, confirmation, the Pill revision and
 a global library state token. A concurrent publication, draft update or version switch
-invalidates old requests. **Activate this version / roll back** switches the single
-active AHU capability to an available published release. It does not create a new
+invalidates old requests. **Activate this version / roll back** switches this Pill's
+active version to an available published release without switching other Pills. It does not create a new
 version, delete later releases, alter drafts or rewrite existing Case reports. New
 Triage runs use the selected release; review checks use the current active version.
 Publishing after rollback still allocates the next version, never reuses an old number.
@@ -367,3 +370,115 @@ APIs: `GET /api/library`, `GET /api/library/:id`,
 Mutation body: `{revision, libraryToken, reviewer, notes, confirmed: true}`.
 Backend and DOM tests cover persistence/restart, legacy files, draft preservation,
 concurrent switches, source comparisons, error retries and Triage behavior after rollback.
+
+## Multi-Pill Operations
+
+In a Studio draft, set the domain and applicability: incident categories are mandatory
+for non-legacy Pills; asset prefixes and issue keywords are optional. Each populated
+dimension must match, with OR within each list. Matching is deterministic and case-insensitive
+for prefixes/keywords; keywords are literal substring matches, not semantic diagnosis.
+Save before document extraction so the Knowledge Capture Agent receives the selected domain.
+Never use broad keyword matches as a safety or engineering validation substitute.
+
+Each Pill has one active, non-disabled release. Legacy published snapshots retain their
+existing active/inactive flags: upgrading does not silently reactivate old knowledge.
+At runtime up to five matching Pills analyze the same immutable case independently.
+Rule/action IDs are namespaced in the combined report; original snapshots, routing
+reasons and specialist results remain available. More than five matches requires
+narrowing the approved criteria rather than silently dropping capabilities.
+
+Actions can declare a shared `coordinationKey` and proposed `coordinationValue`.
+Different values for the same key are flagged as conflicts. This is not a semantic
+conflict detector. All multi-Pill approvals require a named owner, reconciliation
+notes and explicit confirmation; incompatible accepted actions are rejected. A failed
+specialist blocks approval of the combined plan and can be referred to a specialist.
+Changed case facts, selected Pills or versions require renewed analysis/review.
+
+## Tasks and Operational Metrics
+
+Open the **Tasks** tab on a case or `/cases/tasks` for the cross-case queue.
+Dispatch accepted actions from a current, human-reviewed published plan, or assign
+a specialist escalation. Demo advisory approval cannot dispatch operational action tasks.
+Assignments include an owner and due date. Statuses are assigned, in progress, blocked,
+awaiting verification, completed and cancelled. Starting requires current authorization.
+Submitting requires a current actual-action record; completion requires a verified
+outcome after that action. Corrections invalidate referenced evidence for verification.
+Updates use case revisions, persist event history and retain evidence snapshots.
+Completion records task verification, not necessarily case resolution.
+
+Reminders are derived in-app on page load (overdue, due soon within 24 hours, blocked,
+awaiting verification). No scheduled email or push service is installed. External
+work orders support a manually linked HTTPS URL and ID only: no third-party creation,
+synchronization or equipment commands. Operators/assignees are self-declared text,
+not authenticated directory users; this remains a single-process MVP.
+
+Overview measures distinct-case Pill reuse, latest-review correction rate, latest
+knowledge-gap rate and verified median resolution time. Each metric exposes its
+denominator/definition, and empty samples show No data. Per-version comparisons show
+case counts, specialist completion rates, human correction and observed resolution.
+Multi-Pill outcomes and review corrections are shared observations, not causal
+attribution. Sample sizes and case differences prevent claiming measured improvement
+from a simple before/after version comparison. No illustrative impact is reported as fact.
+
+APIs: `GET /api/operations`, `GET /api/tasks`, `GET/POST /api/cases/:id/tasks`,
+`POST /api/cases/:id/tasks/:taskId`. Task updates require revision, actor, operation
+and notes, plus operation-specific evidence/confirmation. Automated tests use synthetic
+knowledge and mocked agents, not a live provider or validated engineering SOP.
+
+## Pill Model Evaluation
+
+Studio includes a separate editable test suite with 2-8 cases, including a supported
+case and a negative or missing-information case. Enter actual test facts and exact
+expected status, rule IDs, action IDs and missing fields. Expected answers are never
+sent to the model. Running evaluation uses the configured provider and consumes quota;
+it does not create operational Cases or execute actions. Nonmatching scope and missing
+asset/observations are handled deterministically, just as in Triage.
+
+Each suite is replayed against the saved candidate and the currently active release.
+The normal evidence/catalog validator runs on model outputs. A provider or validation
+failure is a failed case, never a mock success. The report retains both results, exact
+checks, regressions, model/prompt identity, candidate content and baseline snapshot.
+One run per Pill may run at a time; history persists across restarts. Edited content,
+test suites or changed active baselines invalidate prior results without deleting them.
+
+Saving a suite enables its mandatory release gate; the suite cannot then be emptied
+to bypass the gate. Every candidate case must pass before publication, in addition to
+structural validation, learning incorporation and explicit expert review. Suite and
+draft edits can be saved together. Existing Pills without an enabled suite retain their
+legacy publication flow and are explicitly labeled not evaluated; this is not a blanket
+mandatory gate across all legacy content. Released evaluation evidence is included in
+the version checksum and can be inspected in Library.
+
+This is one observed model run per case/version, not a statistical reliability estimate,
+semantic safety proof or independent expert certification. Baseline/candidate comparison
+uses the same current suite; changes to expected answers still need expert scrutiny.
+
+APIs: `POST /api/studio/:id/save-evaluations` with `{revision, suite}` (optional
+`content` for simultaneous draft edits), and `POST /api/studio/:id/evaluate` with
+`{revision}`. `GET /api/studio/:id` includes gate state, running status and run history.
+
+## Operational Follow-up and Reporting
+
+Tasks accept audited progress updates from 0-99 percent while in progress or blocked.
+Only evidence-backed verification sets completion to 100 percent. Open tasks may be
+escalated to a named owner, then explicitly acknowledged. This is an in-app,
+human-initiated escalation, not a scheduled notification or authenticated sign-off.
+The original assignee remains responsible unless the task is separately reassigned.
+Cancelled tasks may be reopened, but starting again still requires current approval.
+Completed tasks retain historical completion and evidence snapshots; corrected or
+missing referenced evidence generates an evidence-corrected reminder for review and
+reopening. Unacknowledged escalations also appear in reminders.
+
+Overview supports inclusive UTC creation-date ranges, asset substring and category
+filters. Outcome metrics, monthly cohorts and reminders use the selected cases.
+Monthly cohorts show current outcomes for cases created in that month; they are not
+historical dashboard snapshots. CSV exports use the applied filters and include
+definitions, sample sizes, version metrics and gap cases. Cells escape quotes and
+neutralize spreadsheet formula prefixes. Export endpoint:
+`GET /api/operations/export?from=YYYY-MM-DD&to=YYYY-MM-DD&asset=...&category=...`.
+
+Learning knowledge proposals recheck their source facts, latest report, action,
+verified outcome and cited evidence before acceptance or draft import. Corrections
+or new handling invalidate old proposals for these operations while retaining history.
+The improvement queue marks stale evidence. Updated evidence must be analyzed again;
+ordinary task/revision changes alone do not invalidate uncited operational evidence.

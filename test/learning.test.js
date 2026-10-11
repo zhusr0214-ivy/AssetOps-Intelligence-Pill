@@ -116,17 +116,32 @@ test('outdated original Pill version cannot be imported into a newer release', a
   r = await studio.change(r.id, 'fork', { revision: r.revision });
   await assert.rejects(service.apply(incident.id, run.id, run.proposals[0].id, { revision: r.revision }), { status: 409 });
 });
-test('manual cases without a Pill can learn; non-AHU knowledge stays a proposal', async t => {
+test('manual cases without a Pill can create an explicitly scoped non-AHU draft', async t => {
   const { store, service, incident, accepted } = await setup(t);
-  await store.update(incident.id, { category: 'lift', asset: 'Lift A', triageReports: [] }, incident.revision);
+  await store.update(incident.id, { category: 'lift_fault', asset: 'Lift A', triageReports: [] }, incident.revision);
   const run = await accepted(); assert.equal(run.proposals[0].disposition, 'new_pill');
-  await assert.rejects(service.apply(incident.id, run.id, run.proposals[0].id, { name: 'Lift', owner: 'Expert' }), { status: 422 });
+  const draft = await service.apply(incident.id, run.id, run.proposals[0].id, { name: 'Lift', owner: 'Expert' });
+  assert.equal(draft.state, 'draft'); assert.equal(draft.releases.length, 0);
+  assert.equal(draft.content.pill.domain, 'lift_fault');
+  assert.deepEqual(draft.content.pill.applicability.categories, ['lift_fault']);
 });
 test('new AHU knowledge creates a separate draft with no active release', async t => {
   const { store, service, studio, incident, accepted } = await setup(t);
   await store.update(incident.id, { triageReports: [] }, incident.revision); const run = await accepted();
   const r = await service.apply(incident.id, run.id, run.proposals[0].id, { name: 'New knowledge', owner: 'Expert' });
   assert.notEqual(r.id, ahuPill.id); assert.equal(r.state, 'draft'); assert.equal(r.content.pill.rules.length, 0); assert.equal((await studio.library()).length, 0);
+});
+test('corrected outcomes block acceptance and import of stale learning without erasing history', async t => {
+  const { service, incident, analyzed } = await setup(t); const run = await analyzed();
+  let i = (await service.get(incident.id)).incident;
+  i = await service.record(i.id, { ...outcome, revision: i.revision, corrects: run.snapshot.currentOutcomeId, notes: 'New evidence contradicts the earlier observation.' });
+  await assert.rejects(service.decide(i.id, run.id, run.proposals[0].id, { ...review, revision: i.revision }), { status: 409 });
+  assert.equal((await service.list())[0].proposals[0].staleEvidence, true);
+  const second = await setup(t), acceptedRun = await second.accepted();
+  let current = (await second.service.get(second.incident.id)).incident;
+  await second.service.record(current.id, { ...action, revision: current.revision, notes: 'A further action was required.' });
+  await assert.rejects(second.service.apply(current.id, acceptedRun.id, acceptedRun.proposals[0].id, { revision: 0 }), { status: 409 });
+  assert.equal((await second.studio.get(ahuPill.id)).learningImports, undefined);
 });
 test('learning adapter uses configured endpoint, refuses invalid transport and sanitizes failures', async t => {
   const { recorded } = await setup(t); const snapshot = learningSnapshot(await recorded()); let requestBody;

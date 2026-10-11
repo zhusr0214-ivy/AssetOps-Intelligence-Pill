@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { ahuPill, caseFingerprint, selectPill, validateTriageResult } from './triage.js';
+import { ahuPill, caseFingerprint, validateTriageResult } from './triage.js';
+import { matchedPills, bundlePills, actionConflicts } from './pill-routing.js';
 
 const fail = (message, status = 422) => Object.assign(new Error(message), { status });
 const decisions = ['approve', 'approve_with_changes', 'request_information', 'reanalyze', 'escalate', 'reject'];
@@ -8,9 +9,13 @@ export function governancePackage(incident, report = incident.triageReports?.at(
   const findings = [];
   const add = (code, severity, message) => findings.push({ code, severity, message });
   const stale = report.caseFingerprint !== caseFingerprint(incident) || incident.status !== 'ready_for_triage';
+  const matches = matchedPills(incident, activePill);
+  activePill = bundlePills(matches.map(m => m.pill));
   if (stale) add('case_version', 'block', 'Case changed or intake is unconfirmed. Confirm intake and run a new analysis.');
-  if (!selectPill(incident) || !report.pill) add('scope', 'block', 'No applicable AHU Pill. Refer to a domain specialist.');
-  if (report.pill && (report.pill.id !== activePill.id || report.pill.version !== activePill.version || JSON.stringify(report.pill) !== JSON.stringify(activePill))) add('pill_version', 'block', 'The report uses a different Pill definition. Run a new analysis.');
+  if (!matches.length || !report.pill) add('scope', 'block', 'No applicable Pill. Refer to a domain specialist.');
+  if (report.pill && (!activePill || report.pill.id !== activePill.id || report.pill.version !== activePill.version || JSON.stringify(report.pill) !== JSON.stringify(activePill))) add('pill_version', 'block', 'The report uses a different Pill definition or routing selection. Run a new analysis.');
+  if (report.coordination?.required) add('coordination', 'warning', 'Multiple specialist analyses require explicit reconciliation and a responsible owner.');
+  for (const conflict of report.coordination?.conflicts || []) add('action_conflict', 'warning', `Conflicting proposals for ${conflict.key}: ${conflict.values.join(' / ')}. Omit incompatible actions or escalate.`);
   if (report.pill?.status !== 'approved') add('knowledge_status', 'warning', 'Demo knowledge: review decisions are advisory only; operational release is not authorized.');
   if (report.status !== 'complete') add('report_status', 'block', `Report is ${report.status}. Resolve it before approving a plan.`);
   if (incident.conflicts?.length) add('conflicts', 'block', 'Unresolved case facts require confirmation.');
@@ -81,12 +86,15 @@ export function createReviewService(store, currentPill = async () => ahuPill) {
         return { ...original, choice: a.choice, reason: a.choice === 'omit' ? a.reason.trim() : '' };
       });
       const proposals = body.proposals ?? '';
+      if (approving && report.coordination?.required && (body.coordinationConfirmed !== true || !text(body.coordinationNotes, 2000) || !text(body.owner, 100))) throw fail('Confirm cross-Pill review, record reconciliation and assign an owner.');
+      if (approving && actionConflicts(actions.filter(a => a.choice === 'accept')).length) throw fail('Conflicting actions cannot be approved together. Omit incompatible actions or escalate.');
       if (typeof proposals !== 'string' || proposals.length > 3000) throw fail('Action proposals must be at most 3000 characters.');
       if (body.decision === 'approve' && (proposals.trim() || actions.some(a => a.choice === 'omit'))) throw fail('Use approval with changes when changing the plan.');
       if (approving && !actions.some(a => a.choice === 'accept')) throw fail('Select at least one catalog action to approve.');
       if ((approving || body.decision === 'escalate') && !text(body.owner, 100)) throw fail('A responsible owner is required.');
       if (body.decision === 'request_information' && !text(body.questions, 2000)) throw fail('Specify the information required.');
       const review = { id: `REV-${randomUUID()}`, reportId: report.id, caseFingerprint: report.caseFingerprint, createdAt: new Date().toISOString(), reviewer: body.reviewer.trim(), identityVerified: false, assessment: body.assessment, factsVerified: body.factsVerified === true, decision: body.decision, notes: body.notes.trim(), owner: typeof body.owner === 'string' ? body.owner.trim().slice(0, 100) : '', questions: body.decision === 'request_information' ? body.questions.trim() : '', actions, proposals: proposals.trim(), proposalStatus: proposals.trim() ? 'pending_expert_validation' : null, governance: pack, executionAllowed: false, handoffStatus: approving ? 'advisory_plan_approved' : body.decision };
+      if (report.coordination?.required) review.coordination = { confirmed: body.coordinationConfirmed === true, notes: typeof body.coordinationNotes === 'string' ? body.coordinationNotes.trim().slice(0, 2000) : '', conflicts: structuredClone(report.coordination.conflicts) };
       const candidate = { id: `FDB-${randomUUID()}`, reviewId: review.id, incidentId: id, reportId: report.id, pillId: pack.pillId, pillVersion: pack.pillVersion, createdAt: review.createdAt, status: 'pending_validation', notes: review.notes, assessment: review.assessment, proposals: review.proposals, omittedActions: actions.filter(a => a.choice === 'omit'), decision: review.decision };
       await store.update(id, { reviews: [...(incident.reviews || []), review], learningCandidates: [...(incident.learningCandidates || []), candidate], ...(body.decision === 'request_information' ? { status: 'needs_info' } : {}) }, body.revision);
       return review;

@@ -17,8 +17,9 @@ export function caseRoute(path) {
   if (canonical === '/cases/new') return { stage: 'intake', legacy: '/incidents/new' };
   if (canonical === '/cases/triage') return { stage: 'triage', legacy: '/triage' };
   if (canonical === '/cases/review') return { stage: 'review', legacy: '/review' };
-  const match = canonical.match(/^\/cases\/([^/]+)(?:\/(edit|triage|review|handling))?$/);
+  if (canonical === '/cases/tasks') return { stage: 'tasks' };
+  const match = canonical.match(/^\/cases\/([^/]+)(?:\/(edit|triage|review|handling|tasks))?$/);
   if (!match) return null;
   const [, id, stage] = match;
-  return { id, stage: ['triage', 'review', 'handling'].includes(stage) ? stage : 'intake', legacy: stage === 'triage' || stage === 'review' ? `/${stage}/${id}` : `/incidents/${id}${stage === 'edit' ? '/edit' : ''}` };
+  return { id, stage: ['triage', 'review', 'handling', 'tasks'].includes(stage) ? stage : 'intake', legacy: stage === 'triage' || stage === 'review' ? `/${stage}/${id}` : `/incidents/${id}${stage === 'edit' ? '/edit' : ''}` };
 }

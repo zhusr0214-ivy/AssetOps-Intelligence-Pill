@@ -2,11 +2,12 @@ import { api, escapeHtml as e } from './incidents.js';
 import { pillMarkup } from './library.js';
 import { renderLearning } from './learning.js';
 import { renderCaptureEntry, captureMarkup, bindCapture } from './knowledge.js';
+import { evaluationMarkup, bindEvaluation } from './evaluation.js';
 
 const layouts = {
   sources: [['expert', 'Expert / contributor'], ['reference', 'Source / interview reference'], ['knowledge', 'Captured experience', 'text']],
   rules: [['id', 'Rule ID'], ['title', 'Title'], ['guidance', 'Decision guidance', 'text'], ['cardExplanation', 'Explanation', 'text'], ['actionIds', 'Related action IDs (comma separated)', 'list']],
-  actions: [['id', 'Action ID'], ['title', 'Title'], ['instruction', 'Action instruction', 'text'], ['owner', 'Responsible role'], ['ruleIds', 'Related rule IDs (comma separated)', 'list'], ['requiresApproval', 'Requires human approval', 'check']],
+  actions: [['id', 'Action ID'], ['title', 'Title'], ['instruction', 'Action instruction', 'text'], ['owner', 'Responsible role'], ['ruleIds', 'Related rule IDs (comma separated)', 'list'], ['requiresApproval', 'Requires human approval', 'check'], ['coordinationKey', 'Shared control / constraint key (optional)'], ['coordinationValue', 'Proposed value for shared key (optional)']],
   examples: [['scenario', 'Example case and observations', 'text'], ['rationale', 'Expert rationale', 'text'], ['ruleIds', 'Expected rule IDs (comma separated)', 'list'], ['actionIds', 'Expected action IDs (comma separated)', 'list']]
 };
 const names = { sources: 'Expert knowledge', rules: 'Decision rules', actions: 'Action catalog', examples: 'Validation examples' };
@@ -24,17 +25,21 @@ export function editorMarkup(record) {
   return `<a class="back-link" href="/studio">&larr; All Pills</a><header class="workspace-heading"><div><h2>${e(p.name)}</h2><p>${e(p.owner)}</p></div><span class="badge">${e(record.state.replaceAll('_', ' '))}</span></header>
   ${record.validation ? `<section class="triage-section"><h3>${record.validation.passed ? 'Structural validation passed' : 'Validation needs attention'}</h3><p>${e(record.validation.scope)}</p><ul>${record.validation.errors.map(error => `<li>${e(error)}</li>`).join('')}</ul></section>` : ''}
   <p id="studio-error" class="form-error" role="alert" hidden></p><p id="studio-status" role="status"></p>
-  ${published ? `${pillMarkup(record.releases.at(-1).pill)}<button type="button" class="primary" data-operation="fork">Create next draft</button>` : `<form id="pill-editor"><section class="triage-section"><h3>Capability</h3><p class="muted-label">AHU cooling / advisory use</p><div class="studio-fields">${[['name', 'Pill name'], ['owner', 'Knowledge owner'], ['source', 'Knowledge provenance'], ['scope', 'Applicable assets, conditions and exclusions']].map(([key, label]) => field(key, label, p[key], key === 'scope' || key === 'source' ? 'text' : '')).join('')}</div></section>
+  ${published ? `${pillMarkup(record.releases.at(-1).pill)}<button type="button" class="primary" data-operation="fork">Create next draft</button>` : `<form id="pill-editor"><section class="triage-section"><h3>Capability</h3><p class="muted-label">Advisory use / human supervision</p><div class="studio-fields">${[['name', 'Pill name'], ['owner', 'Knowledge owner'], ['source', 'Knowledge provenance'], ['scope', 'Applicable assets, conditions and exclusions']].map(([key, label]) => field(key, label, p[key], key === 'scope' || key === 'source' ? 'text' : '')).join('')}</div></section>
   ${Object.keys(layouts).map(kind => `<section class="triage-section"><h3>${names[kind]}</h3><div data-rows="${kind}">${(c[kind] || p[kind] || []).map(item => row(kind, item)).join('')}</div><button type="button" data-add="${kind}">Add ${kind === 'sources' ? 'source' : kind === 'rules' ? 'rule' : kind === 'actions' ? 'action' : 'example'}</button></section>`).join('')}
   <section class="triage-section"><h3>Boundaries and escalation</h3>${field('boundaries', 'Boundaries (one per line)', p.boundaries.join('\n'), 'text')}${field('escalationConditions', 'Escalation conditions (one per line)', p.escalationConditions.join('\n'), 'text')}</section><div class="actions"><button type="submit" class="primary">Save draft</button><button type="button" data-operation="validate">Validate saved draft</button>${record.state === 'validated' ? '<button type="button" data-operation="submit">Submit for expert review</button>' : ''}</div></form>`}
-  ${record.state === 'in_review' ? `<form id="pill-approval" class="triage-section"><h3>Expert review</h3>${field('reviewer', 'Reviewer name (self-declared)', '')}${field('notes', 'Review rationale', '', 'text')}<label class="studio-check"><input type="checkbox" name="expertConfirmed">I reviewed the sources, decision rules, boundaries and example cases for this version.</label><p>Publishing makes this the active AHU capability for new analyses. Equipment execution remains disabled.</p><div class="actions"><button class="primary" type="submit" value="publish">Approve and publish</button><button type="submit" value="return">Return for changes</button></div></form>` : ''}
+  ${record.state === 'in_review' ? `<form id="pill-approval" class="triage-section"><h3>Expert review</h3>${field('reviewer', 'Reviewer name (self-declared)', '')}${field('notes', 'Review rationale', '', 'text')}<label class="studio-check"><input type="checkbox" name="expertConfirmed">I reviewed the sources, decision rules, boundaries and example cases for this version.</label><p>Publishing activates this version of the Pill for matching cases. Equipment execution remains disabled.</p><div class="actions"><button class="primary" type="submit" value="publish">Approve and publish</button><button type="submit" value="return">Return for changes</button></div></form>` : ''}
   <details class="triage-section"><summary>Published versions (${record.releases.length})</summary>${[...record.releases].reverse().map(release => `<article class="studio-version"><h3>${e(release.pill.version)} ${release.active ? '/ Active' : ''}</h3><p>${e(release.publishedAt)} / ${e(release.reviewer)}</p><p>${e(release.notes)}</p><details><summary>Version content and sources</summary>${pillMarkup(release.pill)}${release.sources.map(s => `<p><strong>${e(s.expert)}</strong> / ${e(s.reference)}</p><p>${e(s.knowledge)}</p>`).join('')}</details></article>`).join('') || '<p>No published versions.</p>'}</details>
   <details class="triage-section"><summary>Change history</summary>${[...record.events].reverse().map(event => `<p>${e(event.at)} / ${e(event.action)} ${e(event.reviewer || '')}${event.notes ? `<br>${e(event.notes)}` : ''}</p>`).join('') || '<p>No changes yet.</p>'}</details>`;
 }
 
 function readContent(form) {
   const pill = Object.fromEntries(['name', 'owner', 'source', 'scope'].map(key => [key, form.querySelector(`[name="${key}"]`).value.trim()]));
-  pill.domain = 'ahu_cooling';
+  pill.domain = form.elements.domain?.value || 'ahu_cooling';
+  if (form.elements.routingCategory) {
+    const selected = [...form.querySelectorAll('[name="routingCategory"]:checked')].map(el => el.value);
+    if (selected.length || pill.domain !== 'ahu_cooling' || form.elements.assetPrefixes.value.trim() || form.elements.routingKeywords.value.trim()) pill.applicability = { categories: selected, assetPrefixes: form.elements.assetPrefixes.value.split(',').map(s => s.trim()).filter(Boolean), keywords: form.elements.routingKeywords.value.split(',').map(s => s.trim()).filter(Boolean) };
+  }
   for (const key of ['boundaries', 'escalationConditions']) pill[key] = form.elements[key].value.split('\n').map(v => v.trim()).filter(Boolean);
   const content = { pill };
   for (const [kind, layout] of Object.entries(layouts)) {
@@ -124,6 +129,8 @@ export async function renderStudio(root, path, navigate) {
     function paint() {
       if (!view.isConnected) return;
       view.innerHTML = editorMarkup(record); dirty = false;
+      view.querySelector('#studio-status').insertAdjacentHTML('afterend', evaluationMarkup(record));
+      bindEvaluation(view, record, operate, () => performCapture(async () => (await api(`/api/studio/${record.id}`)).record, 'Refreshing evaluation...'));
       view.querySelector('#studio-status').insertAdjacentHTML('afterend', captureMarkup(record));
       bindCapture(view, record, performCapture);
       if (record.learningImports?.length) {
@@ -133,6 +140,11 @@ export async function renderStudio(root, path, navigate) {
         section.querySelectorAll('[data-incorporate]').forEach(form => form.onsubmit = event => { event.preventDefault(); operate('incorporate-learning', { proposalId: form.dataset.incorporate, ...Object.fromEntries(new FormData(form)), expertConfirmed: form.elements.expertConfirmed.checked }); });
       }
       const form = view.querySelector('#pill-editor');
+      if (form) {
+        const p = record.content.pill;
+        form.insertAdjacentHTML('afterbegin', `<section class="triage-section"><h3>Domain and applicability</h3><label>Domain<select name="domain">${[...new Set([p.domain || 'ahu_cooling', 'ahu_cooling', 'hvac_local_comfort', 'energy', 'electrical_distribution', 'water_leak', 'lift_fault', 'asset_operations'])].map(v => `<option value="${e(v)}" ${p.domain === v ? 'selected' : ''}>${e(v.replaceAll('_', ' '))}</option>`).join('')}</select></label><fieldset><legend>Incident categories (any selected)</legend>${['hvac', 'hvac_cooling', 'hvac_local_comfort', 'energy', 'water_leak', 'electrical_distribution', 'lift_fault', 'other'].map(v => `<label class="studio-check"><input type="checkbox" name="routingCategory" value="${v}" ${p.applicability?.categories.includes(v) ? 'checked' : ''}>${e(v.replaceAll('_', ' '))}</label>`).join('')}</fieldset>${field('assetPrefixes', 'Asset prefixes (comma separated; optional)', p.applicability?.assetPrefixes.join(', ') || '')}${field('routingKeywords', 'Issue keywords (comma separated; optional)', p.applicability?.keywords.join(', ') || '')}</section>`);
+        const legacyLabel = form.querySelector('.muted-label'); if (legacyLabel) legacyLabel.textContent = 'Advisory use / human supervision';
+      }
       if (form) addReferenceHelpers(form);
       if (candidates.length) {
         const section = document.createElement('details'); section.className = 'triage-section';
@@ -164,9 +176,9 @@ export async function renderStudio(root, path, navigate) {
     async function performCapture(task, message) {
       if (busy) return;
       let errorEl = view.querySelector('#studio-error'); errorEl.hidden = true;
-      if (dirty) { errorEl.textContent = 'Save your draft edits before changing knowledge sources.'; errorEl.hidden = false; return; }
+      if (dirty || view.querySelector('#evaluation-suite')?.dataset.dirty) { errorEl.textContent = 'Save your draft edits and test suite before changing knowledge sources.'; errorEl.hidden = false; return; }
       busy = true;
-      const controls = [...view.querySelectorAll('button, input, textarea')].map(el => [el, el.disabled]);
+      const controls = [...view.querySelectorAll('button, input, textarea, select')].map(el => [el, el.disabled]);
       controls.forEach(([el]) => { el.disabled = true; });
       view.querySelector('#studio-status').textContent = message;
       try {
@@ -185,13 +197,16 @@ export async function renderStudio(root, path, navigate) {
     async function operate(operation, data = {}) {
       if (busy) return;
       const errorEl = view.querySelector('#studio-error'); errorEl.hidden = true;
-      if (dirty && operation !== 'save') { errorEl.textContent = 'Save your changes before continuing.'; errorEl.hidden = false; return; }
-      busy = true; view.querySelectorAll('button, input, textarea').forEach(el => { el.disabled = true; });
+      if (view.querySelector('#evaluation-suite')?.dataset.dirty && operation !== 'save-evaluations') { errorEl.textContent = 'Save the test suite before continuing.'; errorEl.hidden = false; return; }
+      if (dirty && operation === 'save-evaluations') data.content = readContent(view.querySelector('#pill-editor'));
+      if (dirty && !['save', 'save-evaluations'].includes(operation)) { errorEl.textContent = 'Save your changes before continuing.'; errorEl.hidden = false; return; }
+      busy = true; view.querySelectorAll('button, input, textarea, select').forEach(el => { el.disabled = true; });
+      if (operation === 'evaluate') view.querySelector('#studio-status').textContent = 'Evaluating draft and active baseline...';
       try {
         const result = await api(`/api/studio/${encodeURIComponent(record.id)}/${operation}`, { method: 'POST', body: JSON.stringify({ ...data, revision: record.revision }) });
         record = result.record; paint();
         if (view.isConnected) view.querySelector('#studio-status').textContent = operation === 'save' ? 'Draft saved.' : 'Pill updated.';
-      } catch (error) { if (view.isConnected) { errorEl.textContent = error.message; errorEl.hidden = false; view.querySelectorAll('button, input, textarea').forEach(el => { el.disabled = false; }); } }
+      } catch (error) { if (view.isConnected) { errorEl.textContent = error.message; errorEl.hidden = false; view.querySelectorAll('button, input, textarea, select').forEach(el => { el.disabled = false; }); } }
       finally { busy = false; }
     }
     paint();

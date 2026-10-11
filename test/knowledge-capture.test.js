@@ -26,6 +26,16 @@ async function setup(t, options = {}) {
   return { studio, file };
 }
 async function upload(studio) { return studio.upload(ahuPill.id, 0, 'ahu.txt', Buffer.from(source)); }
+test('document extraction receives the saved non-AHU domain without publishing it', async t => {
+  let scope;
+  const { studio } = await setup(t, { captureAgent: async doc => { scope = doc.domain; return { candidates: [], questions: [], conflicts: [] }; } });
+  let record = await studio.get(ahuPill.id); const content = structuredClone(record.content);
+  content.pill.domain = 'energy'; content.pill.applicability = { categories: ['energy'], assetPrefixes: [], keywords: [] };
+  record = await studio.change(record.id, 'save', { revision: record.revision, content });
+  record = await studio.upload(record.id, record.revision, 'energy.txt', Buffer.from('Energy observations'));
+  await studio.analyze(record.id, record.documents[0].id, record.revision);
+  assert.equal(scope, 'energy'); assert.equal((await studio.library()).length, 0);
+});
 async function request(handler, method, url, body, headers = {}) {
   const req = Readable.from(body === undefined ? [] : [Buffer.isBuffer(body) ? body : JSON.stringify(body)]);
   Object.assign(req, { method, url, headers: { host: 'localhost', ...headers } }); let status, response, responseHeaders;

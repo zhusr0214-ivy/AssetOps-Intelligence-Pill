@@ -38,6 +38,34 @@ test('duplicate case wording resolves to the specific structured source', () => 
   assert.deepEqual(result.hypotheses[0].evidence[0], { field: 'observations', quote: 'The fan is running.' });
 });
 
+test('matching numbers in different facts cannot repair a mislabeled evidence source', () => {
+  const value = proposal('HVAC-01');
+  value.hypotheses[0].evidence = [{ field: 'impact', quote: '29 C' }];
+  const readings = { fields: { description: 'Supply air temperature was 29 C.', observations: 'Room temperature was 29 C.', impact: 'Office discomfort.' } };
+  assert.throws(() => validateTriageResult(value, readings, ahuPill), /quote has no unambiguous matching source/);
+});
+
+test('different context or negation cannot be treated as duplicate evidence', () => {
+  const value = proposal('HVAC-01');
+  value.hypotheses[0].evidence = [{ field: 'location', quote: 'fan is running' }];
+  const conflicting = { fields: { description: 'The fan is running.', observations: 'It is not confirmed that the fan is running.' } };
+  assert.throws(() => validateTriageResult(value, conflicting, ahuPill), /quote has no unambiguous matching source/);
+});
+
+test('a unique alternate source still repairs a mislabeled field', () => {
+  const value = proposal('HVAC-01');
+  value.hypotheses[0].evidence = [{ field: 'impact', quote: 'Supply air temperature was 29 C.' }];
+  const readings = { fields: { description: 'Supply air temperature was 29 C.', observations: 'Room temperature was 29 C.', impact: 'Office discomfort.' } };
+  assert.deepEqual(validateTriageResult(value, readings, ahuPill).hypotheses[0].evidence, [{ field: 'description', quote: 'Supply air temperature was 29 C.' }]);
+});
+
+test('a matching explicitly named source is preserved even when other fields share the quote', () => {
+  const value = proposal('HVAC-01');
+  value.hypotheses[0].evidence = [{ field: 'description', quote: '29 C' }];
+  const readings = { fields: { description: 'Supply air temperature was 29 C.', observations: 'Room temperature was 29 C.' } };
+  assert.deepEqual(validateTriageResult(value, readings, ahuPill).hypotheses[0].evidence, [{ field: 'description', quote: '29 C' }]);
+});
+
 test('rendering uses the saved explanation and labels it separately from evidence', () => {
   const result = validateTriageResult(proposal('HVAC-03'), snapshot, ahuPill);
   const report = { ...result, snapshot, pill: structuredClone(ahuPill), status: 'complete', id: 'test', createdAt: '2026-10-08' };

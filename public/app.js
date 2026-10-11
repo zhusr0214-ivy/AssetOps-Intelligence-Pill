@@ -5,6 +5,8 @@ import { renderTriage } from './triage.js';
 import { renderReview } from './review.js';
 import { renderStudio } from './studio.js';
 import { renderHandling } from './learning.js';
+import { renderTasks } from './tasks.js';
+import { renderOperations } from './operations.js';
 import { canonicalPath, caseRoute } from './routes.js';
 
 const nav = document.querySelector('#nav');
@@ -20,6 +22,7 @@ async function overview(view) {
   view.innerHTML = `<header class="workspace-heading"><h2>Operations Overview</h2><a class="button primary" href="/cases/new">New case</a></header><div class="overview-metrics">${[['/cases', 'Cases', incidents.incidents.length], ['/cases/review', 'Pending review', pending.length], ['/studio/improvements', 'Improvement candidates', studio.candidates.length], ['/library', 'Approved Pills', library.pills.length]].map(([url, label, count]) => `<a href="${url}"><span>${label}</span><strong>${count}</strong></a>`).join('')}</div><section class="triage-section"><h3>Awaiting review</h3>${pending.length ? `<ul class="overview-list">${pending.slice(0, 8).map(c => `<li><a href="/cases/${e(c.id)}/review">${e(c.title)}</a><span>${e(c.asset)} / ${e(c.priority)}</span></li>`).join('')}</ul>` : '<p class="empty-state">No cases awaiting review.</p>'}</section><section class="triage-section"><h3>Recent cases</h3>${incidents.incidents.length ? `<ul class="overview-list">${rows(incidents.incidents.slice(0, 8))}</ul>` : '<p class="empty-state">No cases yet.</p>'}</section>`;
   view.querySelector('.overview-metrics a[href="/studio/improvements"] strong').textContent = String(studio.candidates.length + (studio.pendingLearningProposals || 0));
   view.querySelector('.overview-metrics a[href="/library"] strong').textContent = String(new Set(library.pills.map(p => p.id)).size);
+  const insights = document.createElement('div'); view.append(insights); await renderOperations(insights);
 }
 
 async function renderRoute() {
@@ -36,7 +39,9 @@ async function renderRoute() {
       const base = route.id ? `/cases/${route.id}` : '/cases';
       view.innerHTML = `<header class="workspace-heading"><h2>Case Workspace</h2>${route.id ? '<a href="/cases">All cases</a>' : ''}</header>${tabs([[base, route.id ? 'Case information' : 'All cases', 'intake'], [`${base}/triage`, 'AI analysis', 'triage'], [`${base}/review`, 'Human review', 'review'], ...(route.id ? [[`${base}/handling`, 'Handling & Outcome', 'handling']] : [])], route.stage)}<div class="case-stage"></div>`;
       const content = view.querySelector('.case-stage');
-      if (route.stage === 'handling') await renderHandling(content, route.id);
+      const taskLink = document.createElement('a'); taskLink.href = `${base}/tasks`; taskLink.textContent = 'Tasks'; if (route.stage === 'tasks') taskLink.setAttribute('aria-current', 'page'); view.querySelector('.workspace-tabs').append(taskLink);
+      if (route.stage === 'tasks') await renderTasks(content, route.id);
+      else if (route.stage === 'handling') await renderHandling(content, route.id);
       else if (route.stage === 'triage') await renderTriage(content, route.legacy);
       else if (route.stage === 'review') await renderReview(content, route.legacy);
       else await renderIncidents(content, route.legacy, navigate);

@@ -24,6 +24,8 @@ export async function renderHandling(root, id, drafts = {}) {
   const { incident, running } = await api(`/api/cases/${encodeURIComponent(id)}/handling`);
   if (!root.isConnected) return;
   root.innerHTML = handlingMarkup(incident, running);
+  const sourcePills = incident.triageReports?.at(-1)?.sourcePills || [];
+  if (sourcePills.length > 1) root.querySelector('[data-analyze]').insertAdjacentHTML('beforebegin', `<label>Learning target<select id="learning-target"><option value="">Select original Pill</option>${sourcePills.map(p => `<option value="${e(p.id)}">${e(p.name)} / ${e(p.version)}</option>`).join('')}</select></label>`);
   for (const [kind, values] of Object.entries(drafts)) {
     const form = root.querySelector(`[data-record="${kind}"]`);
     for (const [name, value] of Object.entries(values)) {
@@ -52,7 +54,8 @@ export async function renderHandling(root, id, drafts = {}) {
   });
   root.querySelector('[data-analyze]').onclick = () => {
     if (Object.keys(pendingDrafts()).length) { const error = root.querySelector('[role="alert"]'); error.textContent = 'Save pending operational records before analyzing.'; error.hidden = false; return; }
-    perform(() => api(`/api/cases/${encodeURIComponent(id)}/learning`, { method: 'POST', body: JSON.stringify({ revision: incident.revision || 0 }) }), 'Analyzing saved evidence...');
+    const targetPillId = root.querySelector('#learning-target')?.value;
+    perform(() => api(`/api/cases/${encodeURIComponent(id)}/learning`, { method: 'POST', body: JSON.stringify({ revision: incident.revision || 0, targetPillId }) }), 'Analyzing saved evidence...');
   };
   root.querySelector('[data-refresh]').onclick = () => perform(async () => {}, 'Refreshing...');
 }
@@ -60,7 +63,8 @@ export async function renderHandling(root, id, drafts = {}) {
 export function proposalMarkup(run, p) {
   return `<article class="triage-section" data-proposal="${e(p.id)}"><header class="workspace-heading"><h3>${e(p.title)}</h3><span class="badge">${label(p.imported ? p.imported.releasedVersion ? 'released' : p.imported.status : p.decision?.status || 'pending_review')}</span></header><p>${label(p.cause)} / ${label(p.disposition)}</p><p>${e(p.reason)}</p><dl class="learning-comparison"><dt>Before</dt><dd>${e(p.before)}</dd><dt>Proposed change</dt><dd>${e(p.after)}</dd><dt>Applicability</dt><dd>${e(p.applicability)}</dd><dt>Limitations</dt><dd>${e(p.limitations)}</dd></dl><details><summary>Evidence and proposed validation cases</summary>${p.evidence.map(ref => `<blockquote><strong>${e(ref.blockId)}</strong><p>${e(ref.quote)}</p></blockquote>`).join('')}<ul>${p.validationCases.map(v => `<li>${e(v)}</li>`).join('')}</ul></details>
   ${!p.decision ? `<form data-review>${person('reviewer')}<label>Decision<select name="decision"><option value="needs_information">Request more evidence</option><option value="accepted">Accept proposal</option><option value="rejected">Reject proposal</option></select></label>${field('notes', 'Review rationale')}${field('reviewedAfter', 'Reviewed change', p.after, false)}<label class="studio-check"><input type="checkbox" name="confirmed">I reviewed the evidence, applicability and limitations.</label><button type="submit">Save decision</button></form>` : `<p>Reviewed by ${e(p.decision.reviewer)}: ${e(p.decision.notes)}</p>${p.decision.reviewedAfter ? `<p>${e(p.decision.reviewedAfter)}</p>` : ''}`}
-  ${p.imported ? `<a href="/studio/${e(p.imported.pillId)}">Open Pill draft / versions</a>` : p.decision?.status === 'accepted' && ['update_pill', 'new_pill'].includes(p.disposition) ? `<form data-apply>${p.disposition === 'new_pill' ? '<label>New AHU Pill name<input name="name" maxlength="200" required></label><label>Knowledge owner<input name="owner" maxlength="120" required></label>' : '<p>Target: original Pill version. An editable draft is required.</p>'}<button type="submit">Add reviewed proposal to draft</button></form>` : ''}</article>`;
+  ${p.staleEvidence && !p.imported ? '<p class="triage-notice">Evidence changed. Re-analyze the current case before accepting or importing this knowledge.</p>' : ''}
+  ${p.imported ? `<a href="/studio/${e(p.imported.pillId)}">Open Pill draft / versions</a>` : !p.staleEvidence && p.decision?.status === 'accepted' && ['update_pill', 'new_pill'].includes(p.disposition) ? `<form data-apply>${p.disposition === 'new_pill' ? '<label>New Pill name<input name="name" maxlength="200" required></label><label>Knowledge owner<input name="owner" maxlength="120" required></label>' : '<p>Target: original Pill version. An editable draft is required.</p>'}<button type="submit">Add reviewed proposal to draft</button></form>` : ''}</article>`;
 }
 
 export async function renderLearning(root) {
