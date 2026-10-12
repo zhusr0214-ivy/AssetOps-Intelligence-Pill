@@ -566,3 +566,10 @@ button:disabled { opacity: .5; cursor: default; }
 .learning-comparison dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 [data-proposal], .handling-forms .studio-version { overflow-wrap: anywhere; }
 @media (max-width: 700px) { .handling-forms { grid-template-columns: 1fr; } .learning-comparison { grid-template-columns: 1fr; gap: 8px; } }
+:is(.account-form, .account-settings form) { display: grid; gap: 14px; max-width: 620px; }
+:is(.account-form, .account-settings form) label { display: grid; gap: 6px; min-width: 0; }
+:is(.account-form, .account-settings form) input:not([type="checkbox"]):not([type="hidden"]) { width: 100%; min-width: 0; box-sizing: border-box; }
+.account-settings label:has(input[type="checkbox"]) { display: flex; align-items: center; gap: 8px; }
+.account-settings fieldset { display: flex; flex-wrap: wrap; gap: 16px; }
+.account-settings li, .account-settings dd { overflow-wrap: anywhere; }
+.account-settings ul { display: grid; gap: 10px; }

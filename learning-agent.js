@@ -1,3 +1,4 @@
+import { modelFetch } from './model-runtime.js';
 export const learningPromptVersion = 'governed-learning-v2-targeted';
 const fail = message => Object.assign(new Error(message), { status: 502 });
 const str = (v, max = 3000) => typeof v === 'string' && v.trim().length > 0 && v.length <= max;
@@ -30,7 +31,7 @@ export function validateLearning(value, snapshot) {
   return { summary: value.summary, questions: value.questions, proposals };
 }
 
-export function createLearningAgent({ env = process.env, fetchImpl = fetch, timeoutMs = 60000 } = {}) {
+export function createLearningAgent({ env = process.env, fetchImpl = modelFetch, timeoutMs = 60000 } = {}) {
   return async snapshot => {
     const key = env.SOCLAAS_API_KEY?.trim(), base = env.SOCLAAS_BASE_URL?.trim();
     if (!key || !base) throw Object.assign(new Error('Configure SOCLAAS_BASE_URL and SOCLAAS_API_KEY, then restart the server.'), { status: 503 });

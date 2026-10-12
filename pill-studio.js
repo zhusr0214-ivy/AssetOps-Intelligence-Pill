@@ -145,7 +145,7 @@ export function createPillStudio(file, { captureAgent = createKnowledgeCaptureAg
           release.disabled = false;
         } else throw fail('Unknown version operation.', 404);
         record.revision++; record.updatedAt = new Date().toISOString();
-        record.events.push({ action: operation, target: { id, version }, previous: previous ? { id: previous.pill.id, version: previous.pill.version } : null, at: record.updatedAt, revision: record.revision, reviewer: body.reviewer.trim(), notes: body.notes.trim(), identityVerified: false });
+        record.events.push({ action: operation, target: { id, version }, previous: previous ? { id: previous.pill.id, version: previous.pill.version } : null, at: record.updatedAt, revision: record.revision, reviewer: body.reviewer.trim(), notes: body.notes.trim(), identityVerified: Boolean(body.authenticatedActor), actorId: body.authenticatedActor?.id || null });
         return { id, version, operation };
       });
     },
@@ -175,6 +175,7 @@ export function createPillStudio(file, { captureAgent = createKnowledgeCaptureAg
         const knowledge = `${p.decision.reviewedAfter}\nApplicability: ${p.applicability}\nLimitations: ${p.limitations}`;
         if (knowledge.length > 8000) throw fail('Reviewed knowledge exceeds the source size limit.');
         record.content.sources.push({ expert: p.decision.reviewer, reference: `${input.caseId} / ${input.runId} / ${p.id}`, knowledge });
+        if (body.authenticatedActor) record.contributorIds = [...new Set([...(record.contributorIds || []), body.authenticatedActor.id])];
         invalidateLearning(record);
         record.learningImports = [...(record.learningImports || []), { ...structuredClone(input), proposalId: p.id, importedAt: new Date().toISOString(), status: 'pending_incorporation' }];
         record.state = 'draft'; record.validation = null; record.revision++;
@@ -182,7 +183,7 @@ export function createPillStudio(file, { captureAgent = createKnowledgeCaptureAg
         return record;
       });
     },
-    async upload(id, revision, filename, bytes) {
+    async upload(id, revision, filename, bytes, actor) {
       if (!str(filename, 180) || /[\\/\u0000-\u001f]/.test(filename)) throw fail('Invalid filename.');
       find(await list(), id, revision);
       const parsed = await parser(filename, bytes);
@@ -194,6 +195,7 @@ export function createPillStudio(file, { captureAgent = createKnowledgeCaptureAg
         await mkdir(`${file}.uploads`, { recursive: true });
         await writeFile(`${file}.uploads/${document.id}`, bytes, { mode: 0o600 });
         record.documents = [...(record.documents || []), document];
+        if (actor) record.contributorIds = [...new Set([...(record.contributorIds || []), actor.id])];
         record.state = 'draft'; record.validation = null; record.revision++;
         record.events.push({ action: 'source_uploaded', documentId: document.id, revision: record.revision, at: document.uploadedAt });
         return record;
@@ -240,6 +242,7 @@ export function createPillStudio(file, { captureAgent = createKnowledgeCaptureAg
         const doc = record.documents?.find(d => d.id === documentId); if (!doc) throw fail('Source not found.', 404);
         if (doc.status !== 'extracted') throw fail('Only extracted, unreviewed sources can be merged.', 409);
         const merged = mergeKnowledge(record, doc, body);
+        if (body.authenticatedActor) record.contributorIds = [...new Set([...(record.contributorIds || []), body.authenticatedActor.id])];
         record.content = contentFrom(merged.content, id);
         invalidateLearning(record);
         record.captureHistory = [...(record.captureHistory || []), merged.review];
@@ -254,6 +257,7 @@ export function createPillStudio(file, { captureAgent = createKnowledgeCaptureAg
         if (!str(body?.name, 200) || !str(body?.owner, 120)) throw fail('Name and owner are required.');
         const id = `pill-${randomUUID().slice(0, 8)}`;
         const record = { id, revision: 0, state: 'draft', content: { pill: { id, name: body.name.trim(), owner: body.owner.trim(), source: '', scope: '', domain: 'ahu_cooling', rules: [], actions: [], boundaries: ['Advisory only. No equipment commands or work orders.'], escalationConditions: [] }, sources: [], examples: [] }, releases: [], events: [{ action: 'created', at: new Date().toISOString() }], validation: null };
+        record.contributorIds = body.authenticatedActor ? [body.authenticatedActor.id] : [];
         records.push(record); return record;
       });
     },
@@ -266,6 +270,7 @@ export function createPillStudio(file, { captureAgent = createKnowledgeCaptureAg
         if (operation === 'fork') {
           if (record.state !== 'published') throw fail('An editable draft already exists.', 409);
           record.state = 'draft'; record.validation = null;
+          record.contributorIds = [];
         } else {
           if (record.state === 'published') throw fail('Create a new draft before editing a published Pill.', 409);
           if (['validate', 'submit', 'publish'].includes(operation) && record.documents?.some(d => running.has(`${id}/${d.id}`))) throw fail('Wait for knowledge extraction to finish before validating or publishing.', 409);
@@ -278,7 +283,7 @@ export function createPillStudio(file, { captureAgent = createKnowledgeCaptureAg
             if (!item || item.status !== 'pending_incorporation') throw fail('Pending learning import not found.', 409);
             if (!str(body.reviewer, 120) || !str(body.notes, 3000) || body.expertConfirmed !== true) throw fail('Expert confirmation and implementation notes are required.');
             if (!validateDraft(record.content).passed) throw fail('Complete the rules and validation examples before confirming incorporation.');
-            item.status = 'incorporated'; item.incorporation = { reviewer: body.reviewer.trim(), identityVerified: false, notes: body.notes.trim(), at: now, content: structuredClone(record.content) };
+            item.status = 'incorporated'; item.incorporation = { reviewer: body.reviewer.trim(), identityVerified: Boolean(body.authenticatedActor), actorId: body.authenticatedActor?.id || null, notes: body.notes.trim(), at: now, content: structuredClone(record.content) };
             record.state = 'draft'; record.validation = null;
           }
           else if (operation === 'save') { record.content = contentFrom(body.content, id); record.state = 'draft'; record.validation = null;
@@ -292,6 +297,7 @@ export function createPillStudio(file, { captureAgent = createKnowledgeCaptureAg
             if (record.state !== 'in_review' || !str(body.notes, 3000) || !str(body.reviewer, 120)) throw fail('Reviewer and return reason are required for a draft in review.');
             record.state = 'draft'; record.validation = null;
           } else if (operation === 'publish') {
+            if (body.authenticatedActor && record.contributorIds?.includes(body.authenticatedActor.id)) throw fail('A different reviewer must publish this draft. Authors cannot approve their own changes.', 403);
             if (evaluating.has(id)) throw fail('Wait for evaluation to finish before publishing.', 409);
             if (evaluationGate(record).required && !evaluationGate(record).passed) throw fail('The current draft must pass its configured model evaluation before publication.');
             if (record.learningImports?.some(v => v.status === 'pending_incorporation')) throw fail('Confirm how imported learning was incorporated into rules and validation cases before publishing.');
@@ -302,13 +308,14 @@ export function createPillStudio(file, { captureAgent = createKnowledgeCaptureAg
             activation = { target: { id, version: pill.version }, previous: previous ? { id: previous.pill.id, version: previous.pill.version } : null };
             for (const release of record.releases) release.active = false;
             for (const item of record.learningImports || []) if (!item.releasedVersion) item.releasedVersion = pill.version;
-            record.releases.push({ pill, sources: structuredClone(record.content.sources), examples: structuredClone(record.content.examples), learningImports: structuredClone(record.learningImports || []), captureHistory: structuredClone(record.captureHistory || []), validation: structuredClone(record.validation), reviewer: body.reviewer.trim(), identityVerified: false, notes: body.notes.trim(), publishedAt: now, active: true });
+            record.releases.push({ pill, sources: structuredClone(record.content.sources), examples: structuredClone(record.content.examples), learningImports: structuredClone(record.learningImports || []), captureHistory: structuredClone(record.captureHistory || []), validation: structuredClone(record.validation), reviewer: body.reviewer.trim(), identityVerified: Boolean(body.authenticatedActor), actorId: body.authenticatedActor?.id || null, notes: body.notes.trim(), publishedAt: now, active: true });
             record.releases.at(-1).evaluation = record.evaluationRequired ? structuredClone(record.evaluations.at(-1)) : { state: 'not_enabled' };
             record.releases.at(-1).contentHash = releaseHash(record.releases.at(-1));
             record.state = 'published';
           } else throw fail('Unknown Studio operation.', 404);
         }
         record.revision++; record.updatedAt = now;
+        if (body.authenticatedActor && !['publish', 'return'].includes(operation)) record.contributorIds = [...new Set([...(record.contributorIds || []), body.authenticatedActor.id])];
         record.events.push({ action: operation, revision: record.revision, at: now, ...activation, ...(typeof body.reviewer === 'string' ? { reviewer: body.reviewer.trim().slice(0, 120) } : {}), ...(typeof body.notes === 'string' ? { notes: body.notes.trim().slice(0, 3000) } : {}) });
         return record;
       });

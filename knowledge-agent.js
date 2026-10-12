@@ -1,3 +1,4 @@
+import { modelFetch } from './model-runtime.js';
 import { randomUUID } from 'node:crypto';
 
 export const capturePromptVersion = 'knowledge-capture-v2-domain';
@@ -41,7 +42,7 @@ export function validateCapture(value, blocks) {
   return { candidates, questions: value.questions, conflicts: value.conflicts };
 }
 
-export function createKnowledgeCaptureAgent({ env = process.env, fetchImpl = fetch, timeoutMs = 60000 } = {}) {
+export function createKnowledgeCaptureAgent({ env = process.env, fetchImpl = modelFetch, timeoutMs = 60000 } = {}) {
   return async document => {
     const key = env.SOCLAAS_API_KEY?.trim(), base = env.SOCLAAS_BASE_URL?.trim();
     if (!key || !base) throw fail('Configure SOCLAAS_BASE_URL and SOCLAAS_API_KEY, then restart the server.', 503);

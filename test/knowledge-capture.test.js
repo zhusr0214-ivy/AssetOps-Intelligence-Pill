@@ -55,6 +55,10 @@ test('DOCX parser preserves paragraph order', async () => {
   zip.file('word/document.xml', '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>AHU checks</w:t></w:r></w:p><w:p><w:r><w:t>Verify room temperature.</w:t></w:r></w:p></w:body></w:document>');
   const result = await extractDocument('ahu.docx', await zip.generateAsync({ type: 'nodebuffer' }));
   assert.equal(result.blocks[0].text, 'AHU checks'); assert.equal(result.blocks[1].location, 'Paragraph 2');
+  zip.file('word/document.xml', '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Temperature</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>29 C</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>');
+  const table = await extractDocument('table.docx', await zip.generateAsync({ type: 'nodebuffer' }));
+  assert.match(table.blocks[0].text, /Row 1: Column 1: Temperature \| Column 2: 29 C/);
+  assert.ok(table.warnings.some(w => w.includes('merged cells')));
 });
 test('PDF parser preserves page citations and gives actionable feedback on image-only pages', async () => {
   function pdf(text) {

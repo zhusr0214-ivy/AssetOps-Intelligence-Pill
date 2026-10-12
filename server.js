@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { readFile } from "node:fs/promises";
+import { readFile, mkdir, rm, access, writeFile } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assessIntake, validateFields } from './intake.js';
@@ -14,11 +14,14 @@ import { uploadLimit } from './document-parser.js';
 import { createLearningService } from './learning.js';
 import { createTaskService } from './tasks.js';
 import { operationsMetrics, operationsCSV } from './operations-metrics.js';
+import { createAuth } from './auth.js';
+import { createAudit } from './runtime.js';
+import { secureApplication } from './application.js';
+import { createCoordinationAgent } from './coordination-agent.js';
+import { modelFetch } from './model-runtime.js';
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const publicDir = join(__dirname, "public");
-const port = process.env.PORT || 5173;
-const host = process.env.HOST || "127.0.0.1";
 
 const modules = [
   { id: 'overview', title: 'Operations Overview', summary: 'Cases, reviews and knowledge updates.' },
@@ -79,13 +82,22 @@ async function readBody(req) {
     if (size > 100000) throw Object.assign(new Error('Request is too large.'), { status: 413 });
     body += chunk;
   }
-  try { return JSON.parse(body); }
+  try {
+    const value = JSON.parse(body);
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid object');
+    delete value.authenticatedActor;
+    if (req.authenticatedActor) {
+      value.authenticatedActor = req.authenticatedActor;
+      value.actor = value.author = value.reviewer = req.authenticatedActor.name;
+    }
+    return value;
+  }
   catch { throw Object.assign(new Error('Invalid JSON body.'), { status: 400 }); }
 }
 
-export function createHandler(store = createIncidentStore(process.env.DATA_FILE || join(__dirname, 'data/incidents.json')), intakeAgent = createIntakeAgent(), triageAgent, studio = createPillStudio(process.env.PILL_DATA_FILE || join(__dirname, 'data/pills.json')), learningAgent) {
+export function createHandler(store = createIncidentStore(process.env.DATA_FILE || join(__dirname, 'data/incidents.json')), intakeAgent = createIntakeAgent(), triageAgent, studio = createPillStudio(process.env.PILL_DATA_FILE || join(__dirname, 'data/pills.json')), learningAgent, coordinator) {
  const busyCases = new Set();
- const triage = createTriageService(store, triageAgent, undefined, undefined, () => studio.runtimePills());
+ const triage = createTriageService(store, triageAgent, undefined, undefined, () => studio.runtimePills(), coordinator);
  const review = createReviewService(store, () => studio.runtimePills());
  const learning = createLearningService(store, studio, learningAgent);
  const tasks = createTaskService(store, () => studio.runtimePills());
@@ -103,7 +115,12 @@ export function createHandler(store = createIncidentStore(process.env.DATA_FILE 
   if (taskMatch) {
     const [, id, taskId] = taskMatch;
     if (req.method === 'GET' && !taskId) return sendJson(res, 200, await tasks.get(id));
-    if (req.method === 'POST') return sendJson(res, taskId ? 200 : 201, { task: taskId ? await tasks.update(id, taskId, await readBody(req)) : await tasks.create(id, await readBody(req)) });
+    if (req.method === 'POST') {
+      const body = await readBody(req);
+      if (body.operation === 'verify' && req.authenticatedRoles && !req.authenticatedRoles.some(role => ['admin', 'reviewer'].includes(role))) return sendJson(res, 403, { error: 'Reviewer permission is required to verify a task.' });
+      if (body.operation !== 'verify' && req.authenticatedRoles && !req.authenticatedRoles.some(role => ['admin', 'operator'].includes(role))) return sendJson(res, 403, { error: 'Operator permission is required to update task execution.' });
+      return sendJson(res, taskId ? 200 : 201, { task: taskId ? await tasks.update(id, taskId, body) : await tasks.create(id, body) });
+    }
     return sendJson(res, 405, { error: 'Method not allowed.' });
   }
   const handlingMatch = path.match(/^\/api\/cases\/([^/]+)\/(handling|learning)$/);
@@ -137,7 +154,7 @@ export function createHandler(store = createIncidentStore(process.env.DATA_FILE 
       try { filename = decodeURIComponent(req.headers['x-filename'] || ''); } catch { return sendJson(res, 400, { error: 'Invalid filename encoding.' }); }
       const chunks = []; let size = 0;
       for await (const chunk of req) { size += Buffer.byteLength(chunk); if (size > uploadLimit) return sendJson(res, 413, { error: 'Files must be no larger than 10 MB.' }); chunks.push(Buffer.from(chunk)); }
-      return sendJson(res, 201, { record: await studio.upload(pillId, Number(req.headers['x-revision']), filename, Buffer.concat(chunks)) });
+      return sendJson(res, 201, { record: await studio.upload(pillId, Number(req.headers['x-revision']), filename, Buffer.concat(chunks), req.authenticatedActor) });
     }
     if (req.method === 'GET' && operation === 'file') {
       const { document, bytes } = await studio.original(pillId, documentId);
@@ -236,9 +253,30 @@ export function createHandler(store = createIncidentStore(process.env.DATA_FILE 
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   loadLocalEnv();
-  const server = createServer(createHandler());
+  const port = process.env.PORT || 5173, host = process.env.HOST || '127.0.0.1';
+  const directory = join(__dirname, 'data'), lock = join(__dirname, '.assetops-lock');
+  try { await mkdir(lock); }
+  catch { console.error('Data directory is locked. Stop the other process; after an abnormal exit verify it has stopped before removing .assetops-lock.'); process.exit(1); }
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  await writeFile(join(lock, 'owner.json'), JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }));
+  const auth = createAuth(join(directory, 'users.json'));
+  const application = secureApplication(createHandler(undefined, undefined, undefined, undefined, undefined, createCoordinationAgent()), {
+    auth, audit: createAudit(join(directory, 'audit')),
+    readiness: async () => { await access(directory); return { storage: 'accessible', users: (await auth.list()).length, modelConfigured: Boolean(process.env.SOCLAAS_BASE_URL && process.env.SOCLAAS_API_KEY), modelRuntime: modelFetch.status(), ocrEnabled: process.env.OCR_ENABLED === 'true', storageMode: 'single-process-json' }; }
+  });
+  const server = createServer(application);
+  server.requestTimeout = 120000; server.headersTimeout = 15000; server.keepAliveTimeout = 5000;
+  const cleanup = () => rm(lock, { recursive: true, force: true });
+  let closing = false;
+  const shutdown = () => {
+    if (closing) return; closing = true; application.stop();
+    server.close(async () => { await application.whenIdle(); await cleanup(); process.exit(0); });
+    setTimeout(() => { console.error('Shutdown timed out; lock retained for inspection.'); process.exit(1); }, 120000).unref();
+  };
+  process.once('SIGINT', shutdown); process.once('SIGTERM', shutdown);
   server.on('error', error => {
     console.error(error.code === 'EADDRINUSE' ? `Port ${port} is already in use. Try: PORT=5174 npm run dev` : error.message);
+    cleanup().catch(() => {});
     process.exitCode = 1;
   });
   server.listen(port, host, () => console.log(`AssetOps Intelligence Pill running at http://${host}:${port}`));

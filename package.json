@@ -7,6 +7,7 @@
     "dev": "node server.js",
     "start": "node server.js",
     "test": "node --test",
+    "admin": "node scripts/admin.js",
     "check:llm": "node scripts/check-llm.js",
     "check:triage": "node scripts/check-triage.js",
     "check:knowledge": "node scripts/check-knowledge.js"

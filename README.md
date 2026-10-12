@@ -18,10 +18,18 @@ completes its expert sources/examples and approves it through Studio.
 
 ```bash
 npm install
+npm run admin -- bootstrap admin "Administrator"
 npm run dev
 ```
 
 Then open `http://localhost:5173`.
+
+Bootstrap prompts for a password (12-128 characters, hidden input). Run it once,
+with the server stopped; existing accounts are never overwritten. Sign in and use
+**Account & System** to create your teammate's account and assign roles. Draft
+contributors cannot publish their own changes, including administrators.
+See [security and operations](docs/security-and-operations.md) for the role matrix,
+OCR setup, offline backup/restore, and deployment limitations.
 
 ## Pages
 
@@ -31,6 +39,7 @@ Then open `http://localhost:5173`.
 - `/cases/triage`, `/cases/review`: cross-case queues
 - `/studio`, `/studio/improvements`
 - `/library`
+- `/settings`: account, password, user administration, health and audit
 
 Existing `/dashboard`, `/incidents`, `/triage`, `/review`, `/learning` and
 `/governance` links continue to resolve to the new navigation. Existing backend
@@ -56,7 +65,7 @@ expose draft/candidate and approved-knowledge views respectively.
 - Drafts require a description. Confirmation also requires location, priority, start time and impact. Unknown is accepted for start time and impact. Asset and readings are optional.
 - Saving edits returns a case to draft/needs-information. Confirm again to mark it ready for triage.
 
-The backend Intake Agent connects to SOCLAAS through its OpenAI-compatible Chat Completions endpoint. `intake-agent.js` contains the prompts, provider call, validation and field merge. Users answer questions in the case conversation; each request includes saved conversation context and current fields. Extracted facts must occur in user messages. Explicit corrections can update AI-extracted fields; disagreements and changes to manually edited fields require confirmation in the summary. Priority remains user-selected. `intake.js` owns required-field checks; `conversation.js` handles saved messages, follow-up wording and retry behavior. Confirming intake exposes the AI Triage entry point; analysis starts only when requested. Human review and the other unfinished sections remain scaffolds.
+The backend Intake Agent connects to SOCLAAS through its OpenAI-compatible Chat Completions endpoint. `intake-agent.js` contains the prompts, provider call, validation and field merge. Users answer questions in the case conversation; each request includes saved conversation context and current fields. Extracted facts must occur in user messages. Explicit corrections can update AI-extracted fields; disagreements and changes to manually edited fields require confirmation in the summary. Priority remains user-selected. `intake.js` owns required-field checks; `conversation.js` handles saved messages, follow-up wording and retry behavior. Confirming intake exposes the AI Triage entry point; analysis starts only when requested. Human review, task handling and governed learning are available in the same case workspace.
 
 The summary stays editable through Edit summary. Sending a message or saving a field persists changes. A failed model call retains the user message and offers Retry analysis; the same request ID cannot append the message twice. Unsent text and unsaved summary edits are not persisted across a page reload. Existing cases without conversation history remain readable and can start a conversation. Older nonempty fields are treated as manually supplied. Case details include saved conversation history.
 
@@ -71,7 +80,7 @@ The summary stays editable through Edit summary. Sending a message or saving a f
 
 Without published knowledge, the legacy demo supports `hvac_cooling`, or general `hvac` with an AHU asset identifier. Published Pills use their approved applicability criteria (see Multi-Pill Operations below). Unmatched cases return an explicit out-of-scope report without calling a model. An unconfirmed asset or missing observations produces information requests. All cases must have confirmed intake, with no unresolved conflicts or messages.
 
-The model proposes hypotheses and selects rule/action IDs. The backend verifies that rule IDs exist, quoted evidence occurs in the case, and actions belong to cited rules. Action instructions and approval requirements come from the Pill catalog, never model-supplied text. These checks do not verify the semantic correctness of a diagnosis. No equipment commands, work orders, approval actions, human-review endpoints or autonomous execution are implemented. Priority suggestions never modify the user's priority.
+The model proposes hypotheses and selects rule/action IDs. The backend verifies that rule IDs exist, quoted evidence occurs in the case, and actions belong to cited rules. Action instructions and approval requirements come from the Pill catalog, never model-supplied text. These checks do not verify the semantic correctness of a diagnosis. Human review records advisory approvals; no equipment commands, external work-order creation or autonomous execution are performed. Priority suggestions never modify the user's priority.
 
 Each completed attempt (including failures) is appended to `triageReports` on the incident in the existing local data file. Reports retain the input snapshot, Pill contents/version, configured model name, prompt version, timestamps and rule-check results. Changed case facts or unconfirmed intake make old reports stale. Concurrent case edits are preserved. Only one run per case is permitted per server process. Running requests survive browser navigation but are not durable jobs: restarting the server interrupts an in-flight run; retry afterward. Earlier saved reports remain intact.
 
@@ -145,7 +154,7 @@ The messages endpoint accepts `{ "content": "...", "requestId": "client-generate
 
 ## Storage and Checks
 
-Incidents persist to `data/incidents.json`, created on first save using serialized atomic writes. Set `DATA_FILE` to use another file. Use one server process per data file. This local demo has no authentication or multi-process database.
+Incidents persist to `data/incidents.json`, created on first save using serialized atomic writes. Set `DATA_FILE` to use another file. Use one server process per data file. Authentication and role checks are enforced by the production entry point; this is not a multi-process database.
 
 ```bash
 npm test
@@ -185,8 +194,8 @@ in a Studio draft. Candidate resolution status and equipment execution are not i
 Endpoints: `GET /api/review`, `GET /api/review/:id`,
 `POST /api/review/:id`, `GET /api/learning`.
 
-This local MVP records a self-declared reviewer name, not an authenticated identity.
-It does not enforce reviewer roles. Current demo knowledge supports advisory plan
+New review decisions use the authenticated account and require reviewer permission.
+Legacy identities remain unverified. Current demo knowledge supports advisory plan
 review only; no equipment commands or work orders are issued. Rule checks validate
 references and known patterns, not general engineering correctness or every possible
 semantic contradiction. Experts must assess source quality and operating context.
@@ -203,7 +212,7 @@ Structural validation checks required content, unique IDs, reciprocal rule/actio
 and example references. The separate Model evaluation panel runs authored test cases
 through the configured Triage model. Neither establishes engineering correctness.
 The reviewer must explicitly confirm the knowledge before publication.
-Reviewer identity is self-declared; authentication/role enforcement remains future work.
+Publication requires reviewer permission and a different account from the draft contributors.
 
 Published snapshots retain sources, examples, validation and approval notes. Editing
 requires a new draft; releases receive monotonically increasing versions per Pill.
@@ -230,12 +239,13 @@ Existing editable drafts also accept additional uploads. Click **Analyze with Kn
 Capture Agent** to send extracted text to the configured SOCLAAS model. Upload/parsing
 alone does not call the model. The same server-side credentials used by Triage apply.
 
-PDF, DOCX, UTF-8 TXT and Markdown are supported. Limits: 10 MB per file, 100 PDF pages,
+PDF, DOCX, UTF-8 TXT, Markdown, PNG and JPEG are supported. Limits: 10 MB per file, 100 PDF pages,
 60,000 extracted characters and 10 source files per Pill. Larger sources must be split.
 The parser runs in a worker with a 30-second timeout and a bounded JavaScript heap.
 PDF references retain page numbers; DOCX/text references retain paragraph numbers.
-Scanned PDFs require OCR before upload; no OCR or faithful table-layout extraction is
-implemented. Empty pages and DOCX parsing limitations are surfaced for source review.
+Local OCR can recognize scanned PDF pages and image uploads when enabled. DOCX tables
+preserve row/cell order as text, not faithful layout. See the operations guide for
+dependencies, OCR limits and remaining diagram/complex-table limitations.
 
 The agent extracts scope, evidence, rules, actions, boundaries, escalation and examples,
 plus missing information and conflicts. Large sources are analyzed in bounded sections;
@@ -257,7 +267,7 @@ decisions are stored with the Pill. Original files can be downloaded from the ed
 Published versions snapshot capture decisions alongside their knowledge sources.
 Failed extractions can retry; successful or reviewed extractions cannot be overwritten.
 Revision checks prevent stale or duplicate merges. After a server restart an interrupted
-extraction can be retried. Reviewer identity remains self-declared in this local MVP.
+extraction can be retried. Source review identity is bound to the signed-in account.
 
 API: binary `POST /api/studio/:id/documents` with `X-Filename` (URI-encoded) and
 `X-Revision`; `POST /api/studio/:id/documents/:documentId/analyze`;
@@ -326,7 +336,7 @@ APIs: `GET/POST /api/cases/:id/handling`, `POST /api/cases/:id/learning`,
 `GET /api/learning`, `POST /api/learning/:caseId/:runId/:proposalId/{review,apply}`,
 and `POST /api/studio/:id/incorporate-learning`. Mutations require revisions except
 idempotent import (which checks the target draft revision on first application).
-The local MVP has self-declared reviewers, not authentication or role-based access control.
+Learning decisions require reviewer permission; knowledge import requires expert permission.
 Tests use temporary stores and mocked providers; they do not alter saved cases or call
 the live model. Run `npm test` for backend and DOM interaction coverage.
 
@@ -361,8 +371,8 @@ Only inactive versions can be disabled. Disabled releases remain inspectable and
 comparable but cannot activate. Restore makes a disabled release available without
 activating it; activation is a separate confirmed operation. No permanent deletion or
 automatic rollback is provided. Publication and activation history includes target,
-previous active release, timestamp, operator and reason. Reviewers/operators are still
-self-declared: authentication and role-based authorization remain outside this local MVP.
+previous active release, timestamp, operator and reason. New version operations are
+bound to authenticated accounts with reviewer permission; legacy records remain unchanged.
 
 APIs: `GET /api/library`, `GET /api/library/:id`,
 `GET /api/library/:id/compare?from=1.0.0&to=2.0.0`, and
@@ -388,8 +398,10 @@ reasons and specialist results remain available. More than five matches requires
 narrowing the approved criteria rather than silently dropping capabilities.
 
 Actions can declare a shared `coordinationKey` and proposed `coordinationValue`.
-Different values for the same key are flagged as conflicts. This is not a semantic
-conflict detector. All multi-Pill approvals require a named owner, reconciliation
+Different values for the same key are flagged as conflicts. Successful multi-Pill
+runs additionally invoke a bounded coordinator for potential semantic conflicts and
+prerequisite relationships. Its suggestions still require human review.
+All multi-Pill approvals require a named owner, reconciliation
 notes and explicit confirmation; incompatible accepted actions are rejected. A failed
 specialist blocks approval of the combined plan and can be referred to a specialist.
 Changed case facts, selected Pills or versions require renewed analysis/review.
@@ -409,8 +421,10 @@ Completion records task verification, not necessarily case resolution.
 Reminders are derived in-app on page load (overdue, due soon within 24 hours, blocked,
 awaiting verification). No scheduled email or push service is installed. External
 work orders support a manually linked HTTPS URL and ID only: no third-party creation,
-synchronization or equipment commands. Operators/assignees are self-declared text,
-not authenticated directory users; this remains a single-process MVP.
+synchronization or equipment commands. Operators use authenticated accounts; assignees
+remain business text labels rather than enforced account ownership. This remains a
+single-process MVP. Coordinated prerequisite tasks must be verified before dependent
+tasks start, and final task verification requires reviewer permission.
 
 Overview measures distinct-case Pill reuse, latest-review correction rate, latest
 knowledge-gap rate and verified median resolution time. Each metric exposes its

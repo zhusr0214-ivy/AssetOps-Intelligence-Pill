@@ -1,3 +1,4 @@
+import { modelFetch } from './model-runtime.js';
 import { analyzeIntake, assessIntake, validateFields, categories } from './intake.js';
 
 const extractionFields = ['title', 'category', 'location', 'asset', 'occurredAt', 'impact', 'observations', 'actionsTaken', 'affectedScope'];
@@ -189,7 +190,7 @@ function conciseTitle(title, fields, source) {
   return shortEnough(generated) ? generated : [location, issue].filter(Boolean).join(' ');
 }
 
-export function createIntakeAgent({ env = process.env, fetchImpl = fetch, timeoutMs = 30000 } = {}) {
+export function createIntakeAgent({ env = process.env, fetchImpl = modelFetch, timeoutMs = 30000 } = {}) {
   return async (input, context = null) => {
     const supplied = validateFields(input);
     const apiKey = env.SOCLAAS_API_KEY?.trim();
@@ -234,10 +235,6 @@ export function createIntakeAgent({ env = process.env, fetchImpl = fetch, timeou
     let proposed;
     try {
       const content = body.choices?.[0]?.message?.content;
-      console.log('Intake raw response:', JSON.stringify({
-        finishReason: body.choices?.[0]?.finish_reason,
-        content
-      }, null, 2));
       if (typeof content !== 'string' || content.length > 60000) throw new Error();
       proposed = JSON.parse(content.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, ''));
       if (!proposed || typeof proposed !== 'object' || Array.isArray(proposed)) throw new Error();
@@ -259,13 +256,6 @@ export function createIntakeAgent({ env = process.env, fetchImpl = fetch, timeou
         if (proposed[flag] !== undefined && (!Array.isArray(proposed[flag]) || proposed[flag].some(key => !extractionFields.includes(key)))) throw new Error();
       }
     } catch { throw failure('Intake returned an invalid result. Try again or save a draft.'); }
-    console.log('Intake extraction debug:', JSON.stringify({
-      observations: proposed.observations,
-      affectedScope: proposed.affectedScope,
-      corrections: proposed.corrections,
-      contradictions: proposed.contradictions,
-      manualFields: context?.manualFields || []
-    }, null, 2));
     const merged = { ...supplied };
     const extracted = {};
     const conflicts = [];

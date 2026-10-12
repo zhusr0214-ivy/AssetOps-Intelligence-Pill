@@ -3,7 +3,7 @@ import { renderLearning as renderLegacyFeedback } from './review.js';
 
 const label = s => e((s || '').replaceAll('_', ' '));
 const field = (name, title, value = '', required = true) => `<label>${title}<textarea name="${name}" rows="3" maxlength="4000" ${required ? 'required' : ''}>${e(value)}</textarea></label>`;
-const person = name => `<label>${name === 'author' ? 'Recorded by' : 'Reviewer'} (self-declared)<input name="${name}" maxlength="120" required></label>`;
+const person = name => `<label>${name === 'author' ? 'Recorded by' : 'Reviewer'} (signed-in)<input name="${name}" maxlength="120" required></label>`;
 const errorMarkup = '<p class="form-error" role="alert" hidden></p><p class="learning-status" role="status"></p>';
 const latestRecord = (records, kind) => {
   const record = records.filter(r => r.kind === kind).at(-1);

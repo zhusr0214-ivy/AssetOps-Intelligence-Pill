@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { assessIntake, fields, priorities } from './intake.js';
 import { createTriageAgent, createTriageChat, triagePromptVersion } from './triage-agent.js';
 import { matchedPills, bundlePills, scopedId, actionConflicts } from './pill-routing.js';
+import { validateCoordination, coordinationPromptVersion } from './coordination-agent.js';
 
 export const ahuPill = JSON.parse(readFileSync(new URL('./pills/ahu-cooling.json', import.meta.url), 'utf8'));
 const fail = (message, status = 422) => Object.assign(new Error(message), { status });
@@ -181,14 +182,6 @@ export function validateTriageResult(value, snapshot, pill) {
       }
 
       if (!match) {
-        console.error('Evidence mismatch:', JSON.stringify({
-          hypothesis: index + 1,
-          evidence: evidenceIndex + 1,
-          field: evidence.field,
-          modelQuote: quote,
-          originalText: snapshot.fields[evidence.field]
-        }, null, 2));
-
         invalid(`${evidenceLabel}: quote has no unambiguous matching source.`);
       }
 
@@ -264,7 +257,7 @@ function reportView(report, incident) {
   return { ...report, stale: report.caseFingerprint !== caseFingerprint(incident) || incident.status !== 'ready_for_triage' };
 }
 
-export function createTriageService(store, agent = createTriageAgent(), model = process.env.SOCLAAS_MODEL || 'default', chatAgent = createTriageChat(), currentPill = async () => ahuPill) {
+export function createTriageService(store, agent = createTriageAgent(), model = process.env.SOCLAAS_MODEL || 'default', chatAgent = createTriageChat(), currentPill = async () => ahuPill, coordinator) {
   const running = new Map();
   return {
     async list() {
@@ -321,6 +314,17 @@ export function createTriageService(store, agent = createTriageAgent(), model = 
               const conflicts = actionConflicts(actions);
               const status = specialists.some(s => s.status === 'failed') ? 'partial_failure' : specialists.some(s => s.status === 'knowledge_gap') ? 'knowledge_gap' : missingFields.length ? 'needs_information' : 'complete';
               Object.assign(report, { status, specialists, hypotheses, actions, missingFields, summary: specialists.map(s => `${s.name}: ${s.summary || s.error}`).join('\n').slice(0, 2000), prioritySuggestion: null, coordination: { required: true, conflicts, semanticConflictCheck: 'Human review required; only declared coordination keys are automatically compared.' } });
+              if (coordinator && status === 'complete') {
+                const startedAt = new Date().toISOString();
+                try {
+                  const result = validateCoordination(await coordinator({ snapshot, specialists, actions }), actions);
+                  report.coordination.agent = { ...result, status: 'complete', promptVersion: coordinationPromptVersion, startedAt, completedAt: new Date().toISOString() };
+                  report.coordination.semanticConflictCheck = 'AI-assisted conflict and dependency review; human confirmation required.';
+                } catch {
+                  report.coordination.agent = { status: 'failed', promptVersion: coordinationPromptVersion, startedAt, error: 'Cross-Pill coordination failed. Retry analysis before approval.' };
+                  report.status = 'partial_failure';
+                }
+              }
             }
           } catch (error) {
             Object.assign(report, { status: 'failed', error: error.status ? error.message : 'Analysis failed. Retry the request.', summary: '', hypotheses: [], actions: [], missingFields: [], prioritySuggestion: null });

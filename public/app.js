@@ -8,6 +8,8 @@ import { renderHandling } from './learning.js';
 import { renderTasks } from './tasks.js';
 import { renderOperations } from './operations.js';
 import { canonicalPath, caseRoute } from './routes.js';
+import { requireSession, bindAccountIdentity, currentUser } from './session.js';
+import { renderSettings } from './settings.js';
 
 const nav = document.querySelector('#nav');
 const pageRoot = document.querySelector('#page');
@@ -45,7 +47,8 @@ async function renderRoute() {
       else if (route.stage === 'triage') await renderTriage(content, route.legacy);
       else if (route.stage === 'review') await renderReview(content, route.legacy);
       else await renderIncidents(content, route.legacy, navigate);
-    } else if (path === '/overview') await overview(view);
+    } else if (path === '/settings') await renderSettings(view);
+    else if (path === '/overview') await overview(view);
     else if (path === '/studio' || path.startsWith('/studio/')) await renderStudio(view, path, navigate);
     else if (path === '/library' || path.startsWith('/library/')) await renderLibraryPage(view, path, window.location.search);
     else throw new Error('Page not found.');
@@ -60,10 +63,15 @@ document.addEventListener('click', event => {
 });
 window.addEventListener('popstate', renderRoute);
 try {
+  if (await requireSession(pageRoot)) {
+  new MutationObserver(() => bindAccountIdentity(pageRoot)).observe(pageRoot, { childList: true, subtree: true });
+  document.querySelector('.context strong').textContent = currentUser().name;
   const { modules } = await api('/api/modules');
   nav.innerHTML = modules.map((module, index) => `<a href="/${e(module.id)}" class="nav-item" data-route="${e(module.id)}"><span>0${index + 1}</span>${e(module.title)}</a>`).join('');
+  nav.insertAdjacentHTML('beforeend', '<a href="/settings" class="nav-item" data-route="settings">Account & System</a>');
   const top = document.createElement('button'); top.className = 'page-top'; top.textContent = '↑ Back to top'; top.hidden = true;
   top.onclick = () => window.scrollTo({ top: 0, behavior: 'instant' }); document.body.append(top);
   window.addEventListener('scroll', () => { top.hidden = window.scrollY < 500; }, { passive: true });
   await renderRoute();
+  }
 } catch (error) { pageRoot.innerHTML = `<p class="form-error" role="alert">${e(error.message)}</p>`; }

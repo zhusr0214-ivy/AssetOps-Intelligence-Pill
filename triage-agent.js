@@ -1,3 +1,4 @@
+import { modelFetch } from './model-runtime.js';
 export const triagePromptVersion = 'domain-triage-v10-multi-pill';
 
 function unmatchedEvidence(result, caseFields) {
@@ -67,7 +68,7 @@ export function normalizeInspectionReference(content, report) {
   }).filter(Boolean).join(' ');
 }
 
-export function createTriageAgent({ env = process.env, fetchImpl = fetch, timeoutMs = 30000 } = {}) {
+export function createTriageAgent({ env = process.env, fetchImpl = modelFetch, timeoutMs = 30000 } = {}) {
   return async (snapshot, pill) => {
     const key = env.SOCLAAS_API_KEY?.trim();
     const base = env.SOCLAAS_BASE_URL?.trim();
@@ -127,7 +128,7 @@ export function createTriageAgent({ env = process.env, fetchImpl = fetch, timeou
   };
 }
 
-export function createTriageChat({ env = process.env, fetchImpl = fetch, timeoutMs = 30000 } = {}) {
+export function createTriageChat({ env = process.env, fetchImpl = modelFetch, timeoutMs = 30000 } = {}) {
   return async ({ question, incident, report, history }) => {
     const key = env.SOCLAAS_API_KEY?.trim(); const base = env.SOCLAAS_BASE_URL?.trim();
     if (!key || !base) throw fail('Configure SOCLAAS_BASE_URL and SOCLAAS_API_KEY, then restart the server.', 503);

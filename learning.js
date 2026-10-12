@@ -56,7 +56,7 @@ export function createLearningService(store, studio, agent = createLearningAgent
       if (!['action', 'outcome'].includes(body.kind) || !str(body.author, 120) || !str(body.notes) || !str(body.occurredAt, 40) || !Number.isFinite(Date.parse(body.occurredAt)) || Date.parse(body.occurredAt) > Date.now()) throw fail('Enter record type, author, notes and a valid past/current time.');
       const records = i.handlingRecords || [];
       if (body.corrects && !records.some(r => r.id === body.corrects && r.kind === body.kind)) throw fail('Correction must reference an existing record of the same type.');
-      const record = { id: `OPS-${randomUUID()}`, kind: body.kind, author: body.author.trim(), identityVerified: false, notes: body.notes.trim(), occurredAt: new Date(body.occurredAt).toISOString(), recordedAt: now(), corrects: body.corrects || null };
+      const record = { id: `OPS-${randomUUID()}`, kind: body.kind, author: body.author.trim(), identityVerified: Boolean(body.authenticatedActor), actorId: body.authenticatedActor?.id || null, notes: body.notes.trim(), occurredAt: new Date(body.occurredAt).toISOString(), recordedAt: now(), corrects: body.corrects || null };
       if (body.kind === 'action') {
         if (!str(body.rationale) || !str(body.deviation)) throw fail('Record the action rationale and any deviation from approved advice (or explicitly state none/no plan).');
         Object.assign(record, { rationale: body.rationale.trim(), deviation: body.deviation.trim() });
@@ -95,7 +95,7 @@ export function createLearningService(store, studio, agent = createLearningAgent
       if (!['accepted', 'rejected', 'needs_information'].includes(body.decision) || !str(body.reviewer, 120) || !str(body.notes)) throw fail('Reviewer, decision and rationale are required.');
       if (body.decision === 'accepted' && (body.confirmed !== true || !str(body.reviewedAfter))) throw fail('Confirm the evidence and provide the reviewed proposal text.');
       if (body.decision === 'accepted' && !learningEvidenceCurrent(i, run, proposal)) throw fail('Learning evidence changed. Analyze the latest facts and outcomes before accepting this knowledge.', 409);
-      proposal.decision = { status: body.decision, reviewer: body.reviewer.trim(), identityVerified: false, notes: body.notes.trim(), reviewedAfter: body.decision === 'accepted' ? body.reviewedAfter.trim() : null, at: now() };
+      proposal.decision = { status: body.decision, reviewer: body.reviewer.trim(), identityVerified: Boolean(body.authenticatedActor), actorId: body.authenticatedActor?.id || null, notes: body.notes.trim(), reviewedAfter: body.decision === 'accepted' ? body.reviewedAfter.trim() : null, at: now() };
       await store.update(id, { learningRuns: i.learningRuns }, body.revision);
       return proposal;
     },

@@ -1,4 +1,5 @@
 import { renderConversation } from './conversation.js';
+import { csrfHeaders, currentUser } from './session.js';
 
 export const labels = {
   title: 'Title', description: 'Description', location: 'Location', asset: 'Asset',
@@ -16,7 +17,8 @@ export const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char 
 const e = escapeHtml;
 
 export async function api(path, options = {}) {
-  const response = await fetch(path, { ...options, headers: { 'Content-Type': 'application/json' } });
+  const response = await fetch(path, { ...options, headers: { 'Content-Type': 'application/json', ...options.headers, ...csrfHeaders() } });
+  if (response.status === 401 && currentUser()) window.location.reload();
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || 'Unable to complete request.');
   return data;

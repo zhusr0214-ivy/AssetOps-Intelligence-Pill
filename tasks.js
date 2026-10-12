@@ -44,7 +44,7 @@ export function createTaskService(store, currentPills, clock = () => Date.now())
       if (!taskAuthorization(i, task, await currentPills())) throw fail('A current approved published plan or specialist escalation is required.', 409);
       if (i.tasks?.some(t => t.reviewId === task.reviewId && t.actionId === task.actionId)) throw fail('This reviewed action already has a task.', 409);
       const at = new Date(clock()).toISOString();
-      Object.assign(task, { title: kind === 'escalation' ? 'Specialist escalation' : action.title, instruction: kind === 'escalation' ? review.notes : action.instruction, sourceAction: action ? structuredClone(action) : null, assignee: body.assignee.trim(), dueAt: due(body.dueAt), status: 'assigned', createdAt: at, updatedAt: at, identityVerified: false, events: [{ operation: 'assign', actor: body.actor.trim(), at, assignee: body.assignee.trim(), notes: 'Task created from reviewed plan.' }] });
+      Object.assign(task, { title: kind === 'escalation' ? 'Specialist escalation' : action.title, instruction: kind === 'escalation' ? review.notes : action.instruction, sourceAction: action ? structuredClone(action) : null, assignee: body.assignee.trim(), dueAt: due(body.dueAt), status: 'assigned', createdAt: at, updatedAt: at, identityVerified: Boolean(body.authenticatedActor), actorId: body.authenticatedActor?.id || null, events: [{ operation: 'assign', actor: body.actor.trim(), at, assignee: body.assignee.trim(), notes: 'Task created from reviewed plan.' }] });
       await store.update(id, { tasks: [...(i.tasks || []), task] }, body.revision); return task;
     },
     async update(id, taskId, body) {
@@ -69,6 +69,9 @@ export function createTaskService(store, currentPills, clock = () => Date.now())
         task.escalation.acknowledgedAt = new Date(clock()).toISOString(); task.escalation.acknowledgedBy = body.actor.trim();
       } else if (op === 'start') {
         if (!live || !['assigned', 'blocked'].includes(task.status)) throw fail('Refresh approval before starting an assigned or blocked task.', 409);
+        const review = i.reviews.find(r => r.id === task.reviewId), report = i.triageReports.find(r => r.id === review.reportId);
+        const dependencies = report.coordination?.agent?.dependencies || [];
+        if (dependencies.some(d => d.after === task.actionId && !i.tasks.some(t => t.reviewId === task.reviewId && t.actionId === d.before && t.status === 'completed' && taskEvidenceCurrent(i, t)))) throw fail('Complete and verify the prerequisite tasks before starting this action.', 409);
         task.status = 'in_progress';
       } else if (op === 'block') {
         if (!['assigned', 'in_progress'].includes(task.status)) throw fail('Only assigned or in-progress tasks can be blocked.');
@@ -97,6 +100,7 @@ export function createTaskService(store, currentPills, clock = () => Date.now())
         task.external = { id: body.externalId.trim(), url: url.href, linkedBy: body.actor.trim() };
       } else throw fail('Unknown task operation.');
       task.updatedAt = new Date(clock()).toISOString();
+      task.lastActorId = body.authenticatedActor?.id || null;
       task.events.push({ operation: op, actor: body.actor.trim(), notes: body.notes.trim(), at: task.updatedAt, before, after: { status: task.status, assignee: task.assignee, dueAt: task.dueAt, progress: task.progress ?? 0 }, escalation: task.escalation ? structuredClone(task.escalation) : null, actionRecordId: task.actionRecordId || null, outcomeRecordId: task.outcomeRecordId || null, external: task.external || null });
       await store.update(id, { tasks: i.tasks }, body.revision); return task;
     }
