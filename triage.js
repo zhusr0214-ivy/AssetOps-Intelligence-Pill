@@ -41,7 +41,7 @@ function valveStateClaims(text) {
   }).map(match => match[0].toLowerCase().replace(/\s+/g, ' '));
 }
 
-function validateValveStates(value, snapshot, invalid) {
+function validateValveStates(value, snapshot, invalid, pill) {
   const source = ['description', 'observations', 'actionsTaken']
     .map(field => snapshot.fields[field] || '').join('\n');
   const grounded = new Set(valveStateClaims(source));
@@ -53,7 +53,12 @@ function validateValveStates(value, snapshot, invalid) {
     ]),
     ['priority reason', value.prioritySuggestion?.reason || '']
   ];
+  const relevantContext = `${Object.values(snapshot.fields).join('\n')}\n${JSON.stringify(pill)}`;
+  const valveTopic = /\bvalve\b|\bwater[ -]flow\b|阀|水流/i;
   for (const [label, text] of sections) {
+    if (!valveTopic.test(relevantContext) && valveTopic.test(text)) {
+      invalid(`${label}: valve position or water flow is unrelated to the supplied case and Pill. Run a new analysis.`);
+    }
     if (valveStateClaims(text).some(claim => !grounded.has(claim))) {
       invalid(`${label}: an actual valve state is not supported by matching reported evidence. A valve command does not prove actual position or water flow. Run a new analysis.`);
     }
@@ -232,7 +237,7 @@ export function validateTriageResult(value, snapshot, pill) {
       reasoningSource: explanation ? 'pill' : 'model'
     };
   });
-  validateValveStates({ ...value, hypotheses }, snapshot, invalid);
+  validateValveStates({ ...value, hypotheses }, snapshot, invalid, pill);
   // Copy only validated fields; keep action text from the Pill catalog.
   return {
     summary: startReportedUnknown ? distinguishUnknownStart(value.summary.trim()) : value.summary.trim(),

@@ -573,3 +573,7 @@ button:disabled { opacity: .5; cursor: default; }
 .account-settings fieldset { display: flex; flex-wrap: wrap; gap: 16px; }
 .account-settings li, .account-settings dd { overflow-wrap: anywhere; }
 .account-settings ul { display: grid; gap: 10px; }
+
+/* Keep long record labels from widening forms; full evidence wraps below. */
+select { min-width: 0; max-width: 100%; text-overflow: ellipsis; }
+.evidence-preview { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; line-height: 1.5; }

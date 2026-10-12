@@ -45,10 +45,26 @@ export async function renderTasks(root, id) {
       const pane = view.querySelector('.task-detail');
       pane.innerHTML = `<section class="triage-section"><h3>${e(task.title)}</h3><p>${e(task.instruction)}</p>${task.external ? `<a href="${e(task.external.url)}" target="_blank" rel="noopener noreferrer">Work order ${e(task.external.id)}</a>` : ''}${audit(task)}<form><label>Update<select name="operation">${options(ops)}</select></label>${field('actor', 'Operator (signed-in)')}<label>Update notes<textarea name="notes" maxlength="2000" required></textarea></label><div class="operation-fields"></div><p role="alert" class="form-error"></p><button type="submit" class="primary">Save update</button><button type="button" data-reload>Reload tasks</button></form></section>`;
       const form = pane.querySelector('form'), superseded = new Set(data.handlingRecords.map(r => r.corrects).filter(Boolean));
-      const evidence = kind => options(data.handlingRecords.filter(r => r.kind === kind && !superseded.has(r.id) && (kind !== 'outcome' || r.verified)).map(r => [r.id, `${r.id}: ${r.summary || r.notes || r.description || r.status || r.occurredAt}`]));
+      const recordsFor = kind => data.handlingRecords.filter(r => r.kind === kind && !superseded.has(r.id) && (kind !== 'outcome' || r.verified));
+      const recordText = r => r.summary || r.notes || r.description || r.status || r.occurredAt || '';
+      const evidence = kind => recordsFor(kind).map((r, index) => {
+        const full = recordText(r), compact = full.replace(/\s+/g, ' ').trim();
+        const label = `${index + 1}. ${compact.length > 90 ? compact.slice(0, 87) + '…' : compact}`;
+        return `<option value="${e(r.id)}" title="${e(full)}">${e(label)}</option>`;
+      }).join('');
       const fields = () => {
         const op = form.elements.operation.value;
         form.querySelector('.operation-fields').innerHTML = op === 'progress' ? `<label>Progress (0-99%)<input name="progress" type="number" min="0" max="99" step="1" value="${task.progress ?? 0}" required></label>` : op === 'escalate' ? field('escalationOwner', 'Escalation owner') : op === 'assign' ? `${field('assignee', 'Assignee')}${field('dueAt', 'Due date', 'datetime-local')}` : op === 'submit' ? `<label>Actual action<select name="actionRecordId" required><option value="">Select recorded action</option>${evidence('action')}</select></label>` : op === 'verify' ? `<label>Verified outcome<select name="outcomeRecordId" required><option value="">Select recorded outcome</option>${evidence('outcome')}</select></label><label class="review-check"><input type="checkbox" name="confirmed" required>I verified this task against the recorded outcome.</label>` : op === 'link' ? `${field('externalId', 'Work order ID')}${field('externalUrl', 'HTTPS work order URL', 'url')}` : '';
+        const picker = form.querySelector('[name="actionRecordId"], [name="outcomeRecordId"]');
+        if (picker) {
+          const preview = document.createElement('p'); preview.className = 'evidence-preview';
+          preview.setAttribute('aria-live', 'polite'); picker.closest('label').after(preview);
+          const showEvidence = () => {
+            const record = data.handlingRecords.find(r => r.id === picker.value);
+            preview.textContent = record ? `${recordText(record)}${record.occurredAt ? ` — ${new Date(record.occurredAt).toLocaleString()}` : ''}` : 'Select a record to read its full evidence.';
+          };
+          picker.onchange = showEvidence; showEvidence();
+        }
         if (op === 'assign') { form.elements.assignee.value = task.assignee; const date = new Date(task.dueAt); form.elements.dueAt.value = new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16); }
       };
       form.elements.operation.onchange = fields; fields(); form.querySelector('[data-reload]').onclick = () => renderTasks(root, id);
