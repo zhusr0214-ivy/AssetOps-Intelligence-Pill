@@ -1,498 +1,368 @@
-# AssetOps Intelligence Pill
+# AssetOps Intelligence Pill：当前架构与功能报告
 
-Asset Operations workspace organized around cases and reusable domain knowledge.
+> 整理日期：2026-10-12  
+> 代码基线：`ffecbe2` 加本次本地开发增量，尚未提交或推送  
+> 项目阶段：具备受治理知识闭环的本地 MVP  
+> 范围：基于当前代码实现，不将规划功能、模型能力假设或比赛要求视为已实现功能。
 
-## Sections
+## 1. 项目定位
 
-1. Operations Overview: case counts, operational metrics, task reminders and version outcomes.
-2. Case Workspace: intake, multi-Pill analysis, human review, tasks, actual actions and outcomes.
-3. Pill Studio: domain knowledge capture, reviewed drafts and governed improvement candidates.
-4. Pill Library: approved capabilities only.
+AssetOps Intelligence Pill 面向资产运营中的事件处理与专家知识复用。系统把资料和专家经验整理为可审核、可发布、可追溯的 Pill，在事件分析中调用，并根据实际处理结果形成新的知识改进建议。
 
-Pill Studio supports expert sources, structured drafts, reference/example validation,
-expert review, publication, immutable version history and rollback. Case handling and
-outcomes are recorded by people, not inferred from approval. The seeded demo remains unpublished until a user
-completes its expert sources/examples and approves it through Studio.
+它不是仅提供回答的聊天机器人，也不是自动控制设备的平台。对话用于收集事实和解释分析；结构化记录、证据校验、人工决策、任务流转和版本管理承担业务闭环。
 
-## Run
+核心流程：
 
-```bash
-npm install
-npm run admin -- bootstrap admin "Administrator"
-npm run dev
+```text
+上传资料 / 录入专家经验
+  → 提取候选知识 → 人工核对 → Pill 草稿
+  → 结构校验 → 模型评测（启用后必须通过）→ 专家审核 → 发布版本
+  → Case 输入与确认 → 匹配 Pill → AI 分析 → 治理检查 → 人工决定
+  → 分派任务 → 实际行动 → 结果验证
+  → 学习建议 → 专家审核与修订 → 纳入新草稿 → 验证并发布新版本
 ```
 
-Then open `http://localhost:5173`.
+没有匹配 Pill 或知识不足时，系统保留缺口并转交专家，不自动编造经验。人工处理形成的证据仍可进入学习流程。
 
-Bootstrap prompts for a password (12-128 characters, hidden input). Run it once,
-with the server stopped; existing accounts are never overwritten. Sign in and use
-**Account & System** to create your teammate's account and assign roles. Draft
-contributors cannot publish their own changes, including administrators.
-See [security and operations](docs/security-and-operations.md) for the role matrix,
-OCR setup, offline backup/restore, and deployment limitations.
+## 2. 系统架构
 
-## Pages
+### 2.1 总体架构图
 
-- `/overview`
-- `/cases`, `/cases/new`, `/cases/:id`, `/cases/:id/edit`
-- `/cases/:id/triage`, `/cases/:id/review`
-- `/cases/triage`, `/cases/review`: cross-case queues
-- `/studio`, `/studio/improvements`
-- `/library`
-- `/settings`: account, password, user administration, health and audit
+以下 Mermaid 图可在支持 Mermaid 的 Markdown 查看器中渲染。
 
-Existing `/dashboard`, `/incidents`, `/triage`, `/review`, `/learning` and
-`/governance` links continue to resolve to the new navigation. Existing backend
-incident, triage and review APIs are retained; `/api/studio` and `/api/library`
-expose draft/candidate and approved-knowledge views respectively.
-
-## API Skeleton
-
-- `GET /api/modules`
-- `GET /api/dashboard`
-- `GET /api/incidents`
-- `GET /api/triage`
-- `GET /api/review`
-- `GET /api/learning`
-- `GET /api/governance`
-
-## Incident Workspace MVP
-
-- `/incidents`: five columns (ID, title, asset/location, priority, status), search, filters, sorting and pagination.
-- `/incidents/new`: conversational intake with a synchronized case summary. The first sent message creates a persistent draft.
-- `/incidents/:id`: details; `/incidents/:id/edit`: continue intake or edit.
-- Priority is user-selected: low, medium, high or urgent. Intake never infers or overwrites it.
-- Drafts require a description. Confirmation also requires location, priority, start time and impact. Unknown is accepted for start time and impact. Asset and readings are optional.
-- Saving edits returns a case to draft/needs-information. Confirm again to mark it ready for triage.
-
-The backend Intake Agent connects to SOCLAAS through its OpenAI-compatible Chat Completions endpoint. `intake-agent.js` contains the prompts, provider call, validation and field merge. Users answer questions in the case conversation; each request includes saved conversation context and current fields. Extracted facts must occur in user messages. Explicit corrections can update AI-extracted fields; disagreements and changes to manually edited fields require confirmation in the summary. Priority remains user-selected. `intake.js` owns required-field checks; `conversation.js` handles saved messages, follow-up wording and retry behavior. Confirming intake exposes the AI Triage entry point; analysis starts only when requested. Human review, task handling and governed learning are available in the same case workspace.
-
-The summary stays editable through Edit summary. Sending a message or saving a field persists changes. A failed model call retains the user message and offers Retry analysis; the same request ID cannot append the message twice. Unsent text and unsaved summary edits are not persisted across a page reload. Existing cases without conversation history remain readable and can start a conversation. Older nonempty fields are treated as manually supplied. Case details include saved conversation history.
-
-## AI Triage MVP
-
-- `/triage`: confirmed cases and analysis history, with search and report-status filtering.
-- `/triage/:id`: run analysis, inspect hypotheses with quoted case evidence, view catalog-based checks, Pill references, priority suggestions and operating boundaries.
-- The current report also includes an `Ask about this analysis` conversation. It explains evidence and rules using the saved report context; it cannot edit the Case, change Priority or execute actions.
-- `triage-agent.js`: Domain Triage prompt and SOCLAAS model adapter. It uses the existing backend environment variables.
-- `triage.js`: scope matching, case snapshots, deterministic validation and report orchestration.
-- `pills/ahu-cooling.json`: versioned, illustrative AHU cooling knowledge. It is explicitly **demo-only**, project-authored and not approved engineering advice. Review it with a domain expert before operational use.
-
-Without published knowledge, the legacy demo supports `hvac_cooling`, or general `hvac` with an AHU asset identifier. Published Pills use their approved applicability criteria (see Multi-Pill Operations below). Unmatched cases return an explicit out-of-scope report without calling a model. An unconfirmed asset or missing observations produces information requests. All cases must have confirmed intake, with no unresolved conflicts or messages.
-
-The model proposes hypotheses and selects rule/action IDs. The backend verifies that rule IDs exist, quoted evidence occurs in the case, and actions belong to cited rules. Action instructions and approval requirements come from the Pill catalog, never model-supplied text. These checks do not verify the semantic correctness of a diagnosis. Human review records advisory approvals; no equipment commands, external work-order creation or autonomous execution are performed. Priority suggestions never modify the user's priority.
-
-Each completed attempt (including failures) is appended to `triageReports` on the incident in the existing local data file. Reports retain the input snapshot, Pill contents/version, configured model name, prompt version, timestamps and rule-check results. Changed case facts or unconfirmed intake make old reports stale. Concurrent case edits are preserved. Only one run per case is permitted per server process. Running requests survive browser navigation but are not durable jobs: restarting the server interrupts an in-flight run; retry afterward. Earlier saved reports remain intact.
-
-| Method | Route | Purpose |
-| --- | --- | --- |
-| GET | `/api/triage` | Cases with triage eligibility and latest report |
-| GET | `/api/triage/:id` | Current case, reports and running state |
-| POST | `/api/triage/:id/runs` | Analyze the case; body is `{ "revision": 3 }` using its current revision |
-| POST | `/api/triage/:id/reports/:reportId/chat` | Ask a question about a saved, non-stale report |
-
-Run requests return a saved `report` with status `complete`, `needs_information`, `out_of_scope` or `failed`. Model failures are recorded as failed reports rather than erasing earlier results. Precondition errors return 409. The request may take up to 30 seconds for the model. No model request is silently replaced with a mock response.
-
-Optional live test (sends only a synthetic case and consumes provider quota):
-
-```bash
-npm run check:triage
+```mermaid
+flowchart TB
+    Users[运营人员 / 领域专家 / 审核人 / 执行人员]
+    subgraph UI[前端：HTML + CSS + 原生 JavaScript]
+      Overview[Operations Overview]
+      Cases[Case Workspace]
+      Studio[Pill Studio]
+      Library[Pill Library]
+    end
+    Users --> UI
+    UI --> Auth[登录 / 角色授权 / CSRF / 审计]
+    Auth --> API[Node.js HTTP Server / JSON API]
+    subgraph Business[后端业务服务]
+      Intake[事件录入与会话]
+      Triage[Pill 路由与分析编排]
+      Governance[确定性治理与人审]
+      Tasks[任务与执行证据]
+      Knowledge[知识提取与草稿管理]
+      Evaluation[发布前模型评测]
+      Learning[受治理的学习反馈]
+      Metrics[运营指标与 CSV 导出]
+      Versions[发布版本与回滚]
+    end
+    API --> Business
+    subgraph AI[模型调用层]
+      IA[Case Intake Agent]
+      TA[Domain Triage Agent]
+      CA[Cross-Pill Coordinator Agent]
+      QA[Triage 报告对话模块]
+      KA[Knowledge Capture Agent]
+      LA[Learning and Improvement Agent]
+    end
+    Intake --> IA
+    Triage --> TA
+    Triage --> CA
+    Triage --> QA
+    Knowledge --> KA
+    Learning --> LA
+    Evaluation --> TA
+    AI --> Transport[并发限制 / 超时 / 熔断 / 响应大小限制]
+    Transport --> Provider[SOCLAAS / OpenAI 兼容 Chat Completions API]
+    Business --> Storage[本地 JSON 存储 / 上传原文件]
 ```
 
-If the provider still omits intermediate certificates, use the previously verified local chain for both the server and live check:
+### 2.2 技术组成
+
+| 层次 | 当前实现 | 说明 |
+|---|---|---|
+| 前端 | HTML、CSS、原生 JavaScript ES Modules | 无 React/Vue；通过前端路由切换工作区 |
+| 服务端 | Node.js 原生 `node:http` | `server.js` 同时提供静态页面和 JSON API；不是独立微服务集群 |
+| 业务逻辑 | 按事件、分析、人审、任务、知识、学习、评测、版本拆分模块 | 在同一服务进程内编排 |
+| 模型接口 | OpenAI 兼容 Chat Completions | 使用 SOCLAAS 环境配置；不需要为每个 Agent 配置不同密钥 |
+| PDF 提取 | `pdfjs-dist` | 读取可搜索文字、保留页码 |
+| DOCX 提取 | `mammoth` | 提取文本；不保证复杂版式还原 |
+| 存储 | 本地 JSON 文件及上传文件目录 | 单进程串行写入、临时文件替换、revision 冲突检查 |
+| 测试 | Node.js Test Runner、JSDOM | 后端、API、DOM 交互与回归测试 |
+
+运行要求为 Node.js `>=22.13.0`。常用命令为 `npm run dev`、`npm test`；默认监听 `127.0.0.1:5173`，可通过 `HOST`、`PORT` 配置。
+
+### 2.3 外部服务边界
 
-```bash
-NODE_EXTRA_CA_CERTS="/Users/ivychu/Documents/Codex/soclaas-ca-chain.pem" npm run dev
-NODE_EXTRA_CA_CERTS="/Users/ivychu/Documents/Codex/soclaas-ca-chain.pem" npm run check:triage
-```
+- 模型请求只从后端发出，前端不持有 API Key。
+- 配置项包括 `SOCLAAS_BASE_URL`、`SOCLAAS_API_KEY`、`SOCLAAS_MODEL`；本报告不包含密钥。
+- 保留 TLS 证书验证，不能通过关闭验证解决证书问题。
+- 原始资料文字、Case 事实及相关上下文可能被发送给配置的模型服务，真实业务使用前需确认数据授权。
+- 当前没有向量数据库、嵌入检索、独立消息队列或通用 Agent 自治框架。
+
+## 3. Agent 与确定性模块
+
+### 3.1 模型驱动的角色
+
+严格按实现区分，当前有 **5 类核心 LLM Agent，加 1 个模型驱动的报告对话模块**。它们是后端函数和提示词封装，不是独立部署的微服务。
 
-That path is local to this machine; other developers must obtain a verified certificate chain or wait for the provider's certificate configuration to be corrected. Normal tests are offline and use mocked provider responses. `.env` and saved case data are not changed by the tests.
-
-## Model Configuration
-
-Node.js 20.12 or newer is required. The server automatically reads the project-root `.env` at startup. Existing shell environment variables take precedence. Restart the server after configuration changes.
-
-```dotenv
-SOCLAAS_BASE_URL=https://soclaas-api.comp.nus.edu.sg/v1
-SOCLAAS_API_KEY=your-key-here
-SOCLAAS_MODEL=default
-```
-
-Use a plain URL, not Markdown link syntax. `.env` is ignored by Git and is outside the public directory. `.env.example` contains no credentials. Never place the key in frontend code.
-
-The legacy single-input analysis endpoint uses local rules when both key and base URL are absent. Conversational intake requires model configuration; editing and saving summary fields remains available without a model. Partial configuration, model errors, invalid responses and timeouts return an explicit error. Analysis has a 30-second timeout. The model proposes structured field changes; the server constructs follow-up questions and controls readiness and submission.
-
-```bash
-npm run check:llm
-```
-
-This optional live check lists models and submits one synthetic incident to the configured provider (may consume API quota). It does not send saved incidents, print secrets, start the web server or open a browser. Normal `npm test` uses mocked model responses and makes no external requests.
-
-Request format reference: [OpenAI Chat Completions documentation](https://platform.openai.com/docs/api-reference/chat/create). Provider compatibility is checked against SOCLAAS directly.
-
-The live check accepts both the general `hvac` and specific `hvac_cooling` classifications for its synthetic cooling incident. A TLS certificate error is distinct from an invalid API key: verify the provider certificate chain or use an approved organizational CA. Do not disable TLS verification.
-
-## Contextual Follow-ups
-
-Intake distinguishes cooling performance, local thermal comfort, water leaks, electrical distribution and lift faults. It accumulates observations, completed actions and affected scope across turns; conflicting evidence remains subject to human confirmation. Short readings such as `50%, 120 m3/h` and scope replies such as `One room` are recognized when answering the matching question, without treating unrelated replies as diagnostic evidence.
-
-## Incident API
-
-| Method | Route | Purpose |
-| --- | --- | --- |
-| GET | `/api/incidents` | List incidents |
-| POST | `/api/incidents` | Create draft |
-| GET | `/api/incidents/:id` | Read case |
-| PATCH | `/api/incidents/:id` | Save edited intake |
-| POST | `/api/incidents/:id/messages` | Send a message or retry its analysis |
-| POST | `/api/intake/analyze` | Extract fields and identify missing information |
-| POST | `/api/incidents/:id/finalize` | Validate and mark ready for triage |
-
-Request bodies are flat JSON objects with `title`, `description`, `location`, `asset`, `category`, `occurredAt`, `impact`, `observations`, `actionsTaken`, `priority`. Categories: `hvac`, `water_leak`, `energy`, `other`. Status, ID and timestamps are server-owned.
-
-The messages endpoint accepts `{ "content": "...", "requestId": "client-generated-uuid" }`; retry with `{ "requestId": "same-id", "retry": true }`. Responses return the incident including `messages`, `manualFields`, `conflicts` and `revision`. PATCH accepts only the changed fields plus the current `revision`; this marks fields as manually supplied and resolves conflicts for those fields. Finalize accepts the current `revision` and checks missing fields, unresolved conflicts and incomplete messages. Concurrent or stale edits return 409. Conversations are limited to 50 user turns and 6,000 characters per message.
-
-## Storage and Checks
-
-Incidents persist to `data/incidents.json`, created on first save using serialized atomic writes. Set `DATA_FILE` to use another file. Use one server process per data file. Authentication and role checks are enforced by the production entry point; this is not a multi-process database.
-
-```bash
-npm test
-```
-
-Tests cover extraction, priority preservation, validation, API lifecycle, persistence and concurrent writes without starting a browser or binding a port.
-
-If port 5173 is occupied:
-
-```bash
-PORT=5174 npm run dev
-```
-# Human Review MVP
-
-Human Review Center is available at `/review`, with case detail at `/review/:id`.
-The latest triage report is checked against the current case fingerprint, Pill
-definition, scope, evidence references, missing information and action catalog.
-The review package is generated on read and rechecked on submit, then saved with
-the decision. Existing reports can be reviewed without a data migration.
-
-Reviewers record their assessment separately from the action plan, accept or omit
-catalog actions, and approve, approve with changes, request information, request
-re-analysis, refer to a specialist or reject. Omitted actions need reasons.
-Approval requires verified facts, supported analysis, an owner and a current
-complete report without governance blockers. User priority is retained.
-Free-text revised or additional actions are proposals pending expert validation;
-they never become approved catalog actions through the review form.
-
-Information requests return the incident to intake with the review questions.
-New facts require confirmation and a new triage report before another review.
-Decisions use revision checks to reject concurrent or duplicate submissions.
-History preserves report/Pill versions, governance findings and decision rationale.
-Each review also creates a pending feedback candidate visible in `/learning`.
-Candidates remain pending until an expert incorporates and validates their knowledge
-in a Studio draft. Candidate resolution status and equipment execution are not implemented.
-
-Endpoints: `GET /api/review`, `GET /api/review/:id`,
-`POST /api/review/:id`, `GET /api/learning`.
-
-New review decisions use the authenticated account and require reviewer permission.
-Legacy identities remain unverified. Current demo knowledge supports advisory plan
-review only; no equipment commands or work orders are issued. Rule checks validate
-references and known patterns, not general engineering correctness or every possible
-semantic contradiction. Experts must assess source quality and operating context.
-
-## Pill Studio MVP
-
-Open `/studio` to create a domain capability or edit the seeded AHU demo. Add expert
-sources (contributor, reference and captured experience), decision rules, an action
-catalog, boundaries, escalation conditions and example cases. Save, validate, submit
-for expert review, then return for changes or approve and publish. Unsaved edits cannot
-be validated or published. Every saved edit invalidates prior validation.
-
-Structural validation checks required content, unique IDs, reciprocal rule/action links
-and example references. The separate Model evaluation panel runs authored test cases
-through the configured Triage model. Neither establishes engineering correctness.
-The reviewer must explicitly confirm the knowledge before publication.
-Publication requires reviewer permission and a different account from the draft contributors.
-
-Published snapshots retain sources, examples, validation and approval notes. Editing
-requires a new draft; releases receive monotonically increasing versions per Pill.
-Publication activates that version for its Pill, replacing only that Pill's previously
-active release. Multiple Pills may be active together. Drafts never affect runtime knowledge.
-With no publication the application continues to use its original demo Pill. Library
-shows published versions and marks the active one. Historical reports retain their
-original Pill snapshot; review of a report with a superseded definition is blocked.
-Automatic equipment execution remains disabled for published knowledge as well.
-
-Storage: `data/pills.json` (ignored by Git), configurable with `PILL_DATA_FILE`.
-Run only one server process per data file. Writes are serialized and atomic, with
-revision checks for conflicting edits and duplicate publication requests.
-
-API: `GET/POST /api/studio`, `GET /api/studio/:id`, and
-`POST /api/studio/:id/{save,validate,submit,publish,return,fork}`.
-Published versions: `GET /api/library`.
-
-## Knowledge Capture Agent
-
-Studio now starts with **Upload documents** (`/studio/new/upload`) or **Capture
-expert experience** (`/studio/new/expert`). Both create a draft and a retained source.
-Existing editable drafts also accept additional uploads. Click **Analyze with Knowledge
-Capture Agent** to send extracted text to the configured SOCLAAS model. Upload/parsing
-alone does not call the model. The same server-side credentials used by Triage apply.
-
-PDF, DOCX, UTF-8 TXT, Markdown, PNG and JPEG are supported. Limits: 10 MB per file, 100 PDF pages,
-60,000 extracted characters and 10 source files per Pill. Larger sources must be split.
-The parser runs in a worker with a 30-second timeout and a bounded JavaScript heap.
-PDF references retain page numbers; DOCX/text references retain paragraph numbers.
-Local OCR can recognize scanned PDF pages and image uploads when enabled. DOCX tables
-preserve row/cell order as text, not faithful layout. See the operations guide for
-dependencies, OCR limits and remaining diagram/complex-table limitations.
-
-The agent extracts scope, evidence, rules, actions, boundaries, escalation and examples,
-plus missing information and conflicts. Large sources are analyzed in bounded sections;
-cross-section consistency remains an expert review task. Every candidate must cite
-exact source text; invalid citations reject the extraction. Exact matching checks
-provenance, not semantic correctness. Model calls treat uploaded content as untrusted
-source data and cannot publish or execute actions. No silent rules fallback is used.
-
-Review candidates, edit their wording, select the items to keep, and confirm the source
-review. Unselected items are recorded as rejected. Merging appends to the draft and
-invalidates its previous validation; existing knowledge is not overwritten. Linked
-actions/examples require their selected rule candidates. Action owners and example
-rationales absent from source remain blank for expert completion, and imported actions
-default to requiring approval. The draft still requires validation and publication.
-
-Source files are retained under `data/pills.json.uploads/` (or next to `PILL_DATA_FILE`),
-and extracted blocks, SHA-256 hashes, model/prompt versions, citations and candidate
-decisions are stored with the Pill. Original files can be downloaded from the editor.
-Published versions snapshot capture decisions alongside their knowledge sources.
-Failed extractions can retry; successful or reviewed extractions cannot be overwritten.
-Revision checks prevent stale or duplicate merges. After a server restart an interrupted
-extraction can be retried. Source review identity is bound to the signed-in account.
-
-API: binary `POST /api/studio/:id/documents` with `X-Filename` (URI-encoded) and
-`X-Revision`; `POST /api/studio/:id/documents/:documentId/analyze`;
-`POST /api/studio/:id/documents/:documentId/merge`;
-`GET /api/studio/:id/documents/:documentId/file`.
-
-Run `npm run check:knowledge` for a live synthetic-source connectivity check without
-changing Pill data. `npm test` covers parsers, citation validation, merging, retry,
-concurrency and DOM interactions without starting a browser. Node 22.13+ is required
-by the PDF parser; this project is tested on Node 24.
-
-Dependency audit: Mammoth's CLI dependency chain (`argparse` / `sprintf-js`) currently
-has a moderate denial-of-service advisory with no patched upstream release available.
-The application calls Mammoth's raw-text library API, not its CLI or format-string
-parser. Parser work remains bounded by the worker timeout; recheck this dependency
-before a production deployment.
-
-## Governed Learning and Operational Records
-
-Each case now has **Handling & Outcome** at `/cases/:id/handling`. Record actual
-actions (who, when, rationale and deviations), then outcomes (verification evidence,
-remaining issues and resolved/unresolved status). Records are append-only; corrections
-reference an earlier record without removing it. This is a record of human activity,
-not an equipment command, work order or execution authorization. User priority and
-the original intake/triage history remain unchanged. Recording a new action reopens
-the handling status without changing intake readiness.
-
-**Analyze case learning** sends a fixed evidence snapshot to the existing server-side
-SOCLAAS configuration. No additional key is required and `.env` is not changed. The
-Learning & Improvement Agent separates input gaps, agent errors, Pill gaps/errors,
-execution deviations and asset-specific findings. It can propose no change, more
-evidence, agent follow-up, a Pill update or a new Pill. It cannot publish or execute.
-The snapshot retains original Pill version, AI analysis, expert review and operational
-records, plus model/prompt metadata. At most five proposals per run and 65,000 input
-characters are accepted; oversized evidence is rejected rather than silently omitted.
-Provider errors allow retry and do not create partial proposals. Concurrent case edits
-reject the result, requiring a new analysis of the latest records.
-
-Knowledge proposals require exact citations to the current action and verified outcome,
-applicability/limitations and at least two proposed validation scenarios. Superseded
-records cannot be cited as current evidence. Quote validation verifies provenance, not
-engineering correctness or causal proof. Verification is explicitly self-declared by
-the human author, not independently measured by the application.
-
-Review proposals in **Pill Studio > Improvement queue**. Accept with reviewed text,
-reject, or request more information. Decisions are retained; updated evidence requires
-a new analysis. An accepted knowledge proposal can be imported once into a draft as
-an expert source and tracked implementation task. It does NOT automatically patch rules.
-The expert edits rules/actions/examples in Studio, saves, then confirms incorporation
-with rule references and rationale. Draft edits invalidate unreleased incorporation
-confirmations. Existing structural validation, expert approval and publication still
-apply. Releases snapshot the learning evidence, decisions and incorporation records.
-Import receipts live atomically in the Pill store; retries cannot duplicate sources.
-Importing an update requires the original Pill release version and an editable draft.
-
-Cases with no applicable Pill can still record expert handling and outcomes. A Triage
-result with adequate facts but no applicable rule is now `knowledge_gap`, not an invented
-request for more observations. Coverage distinguishes no Pill, no matched rule, missing
-facts, partial evidence and matched rules; matched rules are not a full-coverage guarantee.
-Reviewed non-AHU experience can create a scoped draft; it must still pass source,
-rule, example and expert review requirements before publication. Agent/process proposals
-remain review records, not automatic code changes. Multi-Pill learning requires selecting
-the original specialist Pill to update; the runtime bundle is never itself published.
-
-APIs: `GET/POST /api/cases/:id/handling`, `POST /api/cases/:id/learning`,
-`GET /api/learning`, `POST /api/learning/:caseId/:runId/:proposalId/{review,apply}`,
-and `POST /api/studio/:id/incorporate-learning`. Mutations require revisions except
-idempotent import (which checks the target draft revision on first application).
-Learning decisions require reviewer permission; knowledge import requires expert permission.
-Tests use temporary stores and mocked providers; they do not alter saved cases or call
-the live model. Run `npm test` for backend and DOM interaction coverage.
-
-## Pill Library Version Management
-
-`/library` groups published versions by Pill, showing the active version separately
-from the latest release. Search includes historical content. `/library/:id` shows
-the current active version for that Pill (or its latest release if inactive), complete
-release history, immutable knowledge/source/example snapshots and approval provenance.
-Use `/library/:id/versions/:version` for a specific release and `/library/:id/compare`
-to compare two versions. Rules/actions align by ID; field changes show before/after
-values. Safety lists, sources, examples and capture/learning provenance are compared
-as complete values. Reordering rule/action records alone is not a content change.
-
-Published snapshots, active flags, disabled flags and audit events persist in the
-existing `PILL_DATA_FILE` (default `data/pills.json`) with atomic file replacement.
-New releases include a SHA-256 content checksum excluding mutable activation metadata;
-a stored checksum mismatch blocks reactivation. Legacy releases remain compatible,
-with a calculated checksum when no saved checksum exists. Checksums detect accidental
-changes, not malicious tampering by someone with write access to the storage file.
-Use one application process per data file; multi-process locking is not implemented.
-
-Version management requires an operator, reason, confirmation, the Pill revision and
-a global library state token. A concurrent publication, draft update or version switch
-invalidates old requests. **Activate this version / roll back** switches this Pill's
-active version to an available published release without switching other Pills. It does not create a new
-version, delete later releases, alter drafts or rewrite existing Case reports. New
-Triage runs use the selected release; review checks use the current active version.
-Publishing after rollback still allocates the next version, never reuses an old number.
-
-Only inactive versions can be disabled. Disabled releases remain inspectable and
-comparable but cannot activate. Restore makes a disabled release available without
-activating it; activation is a separate confirmed operation. No permanent deletion or
-automatic rollback is provided. Publication and activation history includes target,
-previous active release, timestamp, operator and reason. New version operations are
-bound to authenticated accounts with reviewer permission; legacy records remain unchanged.
-
-APIs: `GET /api/library`, `GET /api/library/:id`,
-`GET /api/library/:id/compare?from=1.0.0&to=2.0.0`, and
-`POST /api/library/:id/versions/:version/{activate,disable,restore}`.
-Mutation body: `{revision, libraryToken, reviewer, notes, confirmed: true}`.
-Backend and DOM tests cover persistence/restart, legacy files, draft preservation,
-concurrent switches, source comparisons, error retries and Triage behavior after rollback.
-
-## Multi-Pill Operations
-
-In a Studio draft, set the domain and applicability: incident categories are mandatory
-for non-legacy Pills; asset prefixes and issue keywords are optional. Each populated
-dimension must match, with OR within each list. Matching is deterministic and case-insensitive
-for prefixes/keywords; keywords are literal substring matches, not semantic diagnosis.
-Save before document extraction so the Knowledge Capture Agent receives the selected domain.
-Never use broad keyword matches as a safety or engineering validation substitute.
-
-Each Pill has one active, non-disabled release. Legacy published snapshots retain their
-existing active/inactive flags: upgrading does not silently reactivate old knowledge.
-At runtime up to five matching Pills analyze the same immutable case independently.
-Rule/action IDs are namespaced in the combined report; original snapshots, routing
-reasons and specialist results remain available. More than five matches requires
-narrowing the approved criteria rather than silently dropping capabilities.
-
-Actions can declare a shared `coordinationKey` and proposed `coordinationValue`.
-Different values for the same key are flagged as conflicts. Successful multi-Pill
-runs additionally invoke a bounded coordinator for potential semantic conflicts and
-prerequisite relationships. Its suggestions still require human review.
-All multi-Pill approvals require a named owner, reconciliation
-notes and explicit confirmation; incompatible accepted actions are rejected. A failed
-specialist blocks approval of the combined plan and can be referred to a specialist.
-Changed case facts, selected Pills or versions require renewed analysis/review.
-
-## Tasks and Operational Metrics
-
-Open the **Tasks** tab on a case or `/cases/tasks` for the cross-case queue.
-Dispatch accepted actions from a current, human-reviewed published plan, or assign
-a specialist escalation. Demo advisory approval cannot dispatch operational action tasks.
-Assignments include an owner and due date. Statuses are assigned, in progress, blocked,
-awaiting verification, completed and cancelled. Starting requires current authorization.
-Submitting requires a current actual-action record; completion requires a verified
-outcome after that action. Corrections invalidate referenced evidence for verification.
-Updates use case revisions, persist event history and retain evidence snapshots.
-Completion records task verification, not necessarily case resolution.
-
-Reminders are derived in-app on page load (overdue, due soon within 24 hours, blocked,
-awaiting verification). No scheduled email or push service is installed. External
-work orders support a manually linked HTTPS URL and ID only: no third-party creation,
-synchronization or equipment commands. Operators use authenticated accounts; assignees
-remain business text labels rather than enforced account ownership. This remains a
-single-process MVP. Coordinated prerequisite tasks must be verified before dependent
-tasks start, and final task verification requires reviewer permission.
-
-Overview measures distinct-case Pill reuse, latest-review correction rate, latest
-knowledge-gap rate and verified median resolution time. Each metric exposes its
-denominator/definition, and empty samples show No data. Per-version comparisons show
-case counts, specialist completion rates, human correction and observed resolution.
-Multi-Pill outcomes and review corrections are shared observations, not causal
-attribution. Sample sizes and case differences prevent claiming measured improvement
-from a simple before/after version comparison. No illustrative impact is reported as fact.
-
-APIs: `GET /api/operations`, `GET /api/tasks`, `GET/POST /api/cases/:id/tasks`,
-`POST /api/cases/:id/tasks/:taskId`. Task updates require revision, actor, operation
-and notes, plus operation-specific evidence/confirmation. Automated tests use synthetic
-knowledge and mocked agents, not a live provider or validated engineering SOP.
-
-## Pill Model Evaluation
-
-Studio includes a separate editable test suite with 2-8 cases, including a supported
-case and a negative or missing-information case. Enter actual test facts and exact
-expected status, rule IDs, action IDs and missing fields. Expected answers are never
-sent to the model. Running evaluation uses the configured provider and consumes quota;
-it does not create operational Cases or execute actions. Nonmatching scope and missing
-asset/observations are handled deterministically, just as in Triage.
-
-Each suite is replayed against the saved candidate and the currently active release.
-The normal evidence/catalog validator runs on model outputs. A provider or validation
-failure is a failed case, never a mock success. The report retains both results, exact
-checks, regressions, model/prompt identity, candidate content and baseline snapshot.
-One run per Pill may run at a time; history persists across restarts. Edited content,
-test suites or changed active baselines invalidate prior results without deleting them.
-
-Saving a suite enables its mandatory release gate; the suite cannot then be emptied
-to bypass the gate. Every candidate case must pass before publication, in addition to
-structural validation, learning incorporation and explicit expert review. Suite and
-draft edits can be saved together. Existing Pills without an enabled suite retain their
-legacy publication flow and are explicitly labeled not evaluated; this is not a blanket
-mandatory gate across all legacy content. Released evaluation evidence is included in
-the version checksum and can be inspected in Library.
-
-This is one observed model run per case/version, not a statistical reliability estimate,
-semantic safety proof or independent expert certification. Baseline/candidate comparison
-uses the same current suite; changes to expected answers still need expert scrutiny.
-
-APIs: `POST /api/studio/:id/save-evaluations` with `{revision, suite}` (optional
-`content` for simultaneous draft edits), and `POST /api/studio/:id/evaluate` with
-`{revision}`. `GET /api/studio/:id` includes gate state, running status and run history.
-
-## Operational Follow-up and Reporting
-
-Tasks accept audited progress updates from 0-99 percent while in progress or blocked.
-Only evidence-backed verification sets completion to 100 percent. Open tasks may be
-escalated to a named owner, then explicitly acknowledged. This is an in-app,
-human-initiated escalation, not a scheduled notification or authenticated sign-off.
-The original assignee remains responsible unless the task is separately reassigned.
-Cancelled tasks may be reopened, but starting again still requires current approval.
-Completed tasks retain historical completion and evidence snapshots; corrected or
-missing referenced evidence generates an evidence-corrected reminder for review and
-reopening. Unacknowledged escalations also appear in reminders.
-
-Overview supports inclusive UTC creation-date ranges, asset substring and category
-filters. Outcome metrics, monthly cohorts and reminders use the selected cases.
-Monthly cohorts show current outcomes for cases created in that month; they are not
-historical dashboard snapshots. CSV exports use the applied filters and include
-definitions, sample sizes, version metrics and gap cases. Cells escape quotes and
-neutralize spreadsheet formula prefixes. Export endpoint:
-`GET /api/operations/export?from=YYYY-MM-DD&to=YYYY-MM-DD&asset=...&category=...`.
-
-Learning knowledge proposals recheck their source facts, latest report, action,
-verified outcome and cited evidence before acceptance or draft import. Corrections
-or new handling invalidate old proposals for these operations while retaining history.
-The improvement queue marks stale evidence. Updated evidence must be analyzed again;
-ordinary task/revision changes alone do not invalidate uncited operational evidence.
+| 角色 | 代码入口 | 输入 | 输出与职责 | 权限边界 |
+|---|---|---|---|---|
+| Case Intake Agent | `intake-agent.js`：`createIntakeAgent` | 用户消息、现有事件字段和会话上下文 | 提取事件事实、识别更新；后端组织追问和就绪判断 | 不自行确认最终 Case；优先级由用户设置 |
+| Knowledge Capture Agent | `knowledge-agent.js`：`createKnowledgeCaptureAgent` | 资料文本块、来源位置、保存的领域 | 提取范围、规则、行动、边界、升级条件、示例和缺失信息 | 候选内容必须人工核对，不能直接发布 |
+| Domain Triage Agent | `triage-agent.js`：`createTriageAgent` | 确认后的 Case 快照、选中的 Pill | 提出可能原因，引用事实，选择规则及行动 ID，指出缺失信息 | 不能任意生成并执行新行动；行动正文取自 Pill 目录 |
+| Cross-Pill Coordinator Agent | `coordination-agent.js`：`createCoordinationAgent` | 已验证的多领域报告和候选行动 | 识别潜在冲突、前置关系、待确认问题，生成建议顺序 | 行动 ID 与依赖环由后端验证；不能批准或执行 |
+| Learning & Improvement Agent | `learning-agent.js`：`createLearningAgent` | 实际行动、验证结果、人审意见、分析记录及任务证据 | 区分知识问题、输入问题、Agent 问题和执行偏差，提出改进建议 | 不自动修改或发布 Pill；知识变化须经过专家审核 |
+| Triage 报告对话模块 | `triage-agent.js`：`createTriageChat` | 选定报告、Case 和对话历史 | 回答针对该报告的依据、规则及建议的问题 | 不是新的行动授权；不能修改 Case、批准计划或执行设备操作 |
+
+多 Pill 场景针对不同 Pill **分别调用同一个 Domain Triage Agent 实现**。全部成功后自动进行一次协调检查；协调失败保留专家报告，但阻断批准。属于有界分析编排，不是自由协商或自动执行。
+
+### 3.2 Governance Agent 的实际实现
+
+产品概念中的 Governance Agent，目前主要由 `review.js` 的 `governancePackage()` 承担，是**确定性治理模块**，不单独请求大模型。
+
+已经检查的内容包括：
+
+- Case 事实是否与报告快照一致，事件是否仍处于已确认状态。
+- 当前适用的 Pill 及版本是否与报告一致。
+- 报告是否完整，是否存在缺失信息、未解决冲突或待处理消息。
+- 规则 ID、证据引用和行动 ID 是否通过校验。
+- 行动内容是否与 Pill 目录一致，是否需要审批。
+- 多 Pill 是否存在已声明的行动冲突，是否需要人工协调。
+- 将阻断项、警告、边界和待审核行动整理为审核包。
+
+它不能证明诊断正确、自动判断所有工程风险，也不是法规合规认证工具。
+
+### 3.3 其他非 LLM 模块
+
+| 模块 | 文件 | 当前职责 |
+|---|---|---|
+| 会话状态与输入检查 | `conversation.js`、`intake.js` | 字段合并、人工修改保护、冲突确认、重试与提交检查 |
+| Pill 路由与协作 | `pill-routing.js` | 按条件选择 Pill，给规则和行动加来源标识，检查显式冲突 |
+| 分析结果验证 | `triage.js` | 验证引用与目录边界，保存分析状态和来源快照 |
+| 资料解析与合并 | `document-parser.js`、`knowledge-merge.js` | 提取文字、保留引用位置、合并已审核知识 |
+| 发布前评测 | `pill-evaluation.js` | 复用 Triage Agent，按测试预期比较草稿和生效版本 |
+| 任务管理 | `tasks.js` | 分派、进度、升级、证据提交、结果验证与提醒 |
+| 版本治理 | `pill-studio.js`、`pill-versions.js` | 草稿、发布快照、版本比较、激活、停用与回滚 |
+| 统计 | `operations-metrics.js` | 明确口径的指标、筛选、月度案例分组和 CSV 导出 |
+
+## 4. 当前前端工作区
+
+现在的顶层导航是 **4 个业务工作区，加 Account & System 设置入口**。AI 分析、人审、任务和结果记录围绕同一个 Case 展开。
+
+| 工作区 | 主要路径 | 包含能力 |
+|---|---|---|
+| Operations Overview | `/overview` | 数量概览、待审事项、运营指标、提醒、知识缺口、版本表现、筛选与导出 |
+| Case Workspace | `/cases`、`/cases/:id` | 事件会话、事实确认、AI Triage、人审、任务、实际行动与结果 |
+| Pill Studio | `/studio` | 文件上传、人工经验录入、候选知识审核、草稿编辑、结构校验、模型评测和专家发布 |
+| Pill Library | `/library` | 已发布知识、适用范围、来源、版本比较、历史版本管理与回滚 |
+
+重要子页面包括：
+
+- `/cases/:id/triage`：该事件的分析、证据、报告历史和报告对话。
+- `/cases/:id/review`：治理检查结果和人工决定。
+- `/cases/:id/tasks`：单个 Case 的任务流转。
+- `/cases/tasks`：跨 Case 任务队列。
+- `/cases/:id/handling`：实际行动、结果验证与学习分析入口。
+- `/studio/improvements`：学习改进建议的审核和草稿导入。
+- `/library/:id/compare`：同一个 Pill 的版本内容比较。
+
+## 5. Pill 的数据结构和使用方式
+
+Pill 不是一个独立聊天 Agent，也不是单纯的资料附件。当前实现可理解为**受治理的领域知识包**。
+
+| 内容 | 作用 |
+|---|---|
+| `id`、名称、owner、domain | 标识知识包、责任人和领域 |
+| `scope`、`applicability` | 描述适用条件；配置类别、资产前缀、问题关键词 |
+| `rules` | 保存规则 ID、标题、指导内容、解释及关联行动 |
+| `actions` | 保存标准行动、责任角色、审批标记及关联规则 |
+| `coordinationKey` / `coordinationValue` | 可选的共享约束键及建议值，用于显式冲突检查 |
+| `boundaries` | 适用边界和禁止越界内容 |
+| `escalationConditions` | 需要升级处理的条件 |
+| 来源与示例 | 专家经验、文档出处、引用与人工编写的验证示例 |
+| 发布元数据 | 版本、审核人、发布时间、快照校验值及生效状态 |
+| 评测与学习记录 | 独立模型评测证据、已纳入的学习建议和来源追踪 |
+
+来源、示例、评测、发布元数据等由 Studio 记录及发布快照保存，并非全部嵌在运行时 `pill` 对象中。
+
+当前运行方式是：**确定性条件匹配 → 取出生效 Pill → 将其作为结构化上下文交给模型 → 验证输出**。没有实现向量 RAG，也不是调用外部 Skill 文件；可以借用知识检索增强的概念解释，但不应宣称已具备向量检索系统。
+
+## 6. 已实现功能
+
+### 6.1 资料与专家经验进入 Pill
+
+- 支持上传可搜索 PDF、DOCX、UTF-8 TXT 和 Markdown。
+- 支持人工填写专家经验，作为知识来源进入提取流程。
+- 保留原始文件、文本块、页码或段落位置以及引用。
+- 上传解析和 AI 拆解是两个步骤，上传本身不自动消耗模型额度。
+- 提取候选规则、行动、范围、边界、升级条件和示例。
+- 人工选择候选项、编辑内容、确认来源后再合并到草稿。
+- 非 AHU 领域可以配置适用条件，经过审核后发布。
+
+当前限制包括每个文件最多 10 MB、PDF 最多 100 页、提取文字最多 60,000 字符、每个 Pill 最多 10 个来源文件。新增 PNG/JPEG 上传及可启用的本地 Tesseract OCR，扫描 PDF 通过 Poppler 转图，每次最多识别 5 个扫描页。DOCX 表格保留行列顺序；复杂表格、图纸语义和 OCR 数值仍须人工核对。
+
+### 6.2 Pill 草稿、审核与发布前评测
+
+- 草稿可编辑专家来源、规则、行动、关联关系、边界、示例和路由条件。
+- 结构校验检查必填内容、ID 唯一性、规则与行动双向引用以及示例引用。
+- 专家可以批准发布或退回修改；保存编辑会使此前的结构校验失效。
+- 独立模型评测支持 2–8 个测试案例，必须包含支持案例和反例或信息缺口案例。
+- 对草稿和当前生效版本使用同一测试集，检查预期状态、规则、行动和缺失字段。
+- 模型调用失败或证据验证失败会记为失败，不用模拟结果替代。
+- 保留评测历史、基准版本、模型与提示词版本以及退步标记。
+- 启用评测后，当前草稿必须通过评测才能发布；内容、测试集或生效基准变化后，旧结果失效。
+
+**兼容性说明：旧 Pill 未启用评测时仍保留原有人工发布流程，并明确标记未评测。不是所有历史知识都已经通过模型评测。**
+
+### 6.3 事件录入与确认
+
+- 用户通过对话描述事件，系统提取并累积事实。
+- 主要字段包括标题、描述、位置、资产、类别、时间、影响、观察、已做行动、受影响范围及优先级。
+- 用户可人工编辑摘要、确认冲突和补充信息。
+- 优先级由用户设置；AI 的优先级建议不会自动覆盖它。
+- 消息和事件记录持久化；失败消息可重试，并防止重复追加。
+- 已确认且没有未解决输入问题的 Case 才能进入分析。
+
+### 6.4 多 Pill 选择、分析与协作
+
+- 每个 Pill 独立管理生效版本，多个不同 Pill 可以同时生效。
+- 按事件类别、资产前缀和问题关键词匹配，保留匹配理由。
+- 每个已配置的匹配维度都须满足；同一列表内满足一个值即可。
+- 最多选择 5 个匹配 Pill。超过限制时要求收窄条件，不静默丢弃。
+- 各 Pill 分别分析同一 Case 快照，再汇总为一份报告。
+- 相同规则或行动 ID 会加上 Pill 标识，避免跨包混淆。
+- 保存各分析结果和原始 Pill 版本，支持来源追溯。
+- 显式冲突会被标记；多 Pill 批准必须填写协调说明和负责人。
+- 任一分析失败会形成不完整报告，阻止直接批准整份计划，可交由专家处理。
+
+**边界：关键词仍是字面匹配；声明式冲突检查之外新增模型辅助的语义冲突与依赖建议，但不保证识别所有冲突。没有跨 Agent 自由协商或设备自主执行。**
+
+### 6.5 AI Triage 和报告对话
+
+- 输出可能原因、事实引用、关联规则、标准检查行动、不确定性及补充问题。
+- 核验规则和行动是否存在、引用是否来自 Case、行动是否与规则关联。
+- 区分无适用 Pill、知识缺口、缺少信息、分析失败及部分分析失败。
+- 保存报告历史和 Case 快照；事实发生变化后旧报告标记失效。
+- 用户可针对报告继续提问，但回答不构成执行授权。
+
+引用和目录校验只能降低错误风险，不能证明工程诊断正确；对话回答也不是经过全面语义验证的结论。
+
+### 6.6 人工审查
+
+- 集中展示关键结论、治理警告、阻断项及行动决策。
+- 审核人可对每个建议行动选择接受或省略，并说明原因。
+- 支持批准、修改后批准、请求补充信息、重新分析、升级专家或拒绝。
+- 新提出的行动保留为待验证建议，不自动加入已批准计划。
+- 多 Pill 冲突行动不能同时获批，须人工取舍或升级。
+- 人审意见和历史决定会保留，并可成为学习输入。
+
+### 6.7 任务流转
+
+- 从有效的人审计划分派标准行动，或建立专家升级任务。
+- 支持负责人、截止日期、重新分派、阻塞、取消及重开。
+- 支持 0–99% 进度记录，只有结果验证后才记为完成和 100%。
+- 开始任务前再次检查授权是否仍然有效。
+- 提交执行证据必须引用 Case 中的实际行动记录。
+- 完成验证必须引用发生于行动之后的已验证结果。
+- 支持升级到指定负责人及明确签收，保存事件历史。
+- 已完成任务引用的证据被纠正或缺失时，会提示复核；历史完成记录不被抹除。
+- 站内提醒包括逾期、即将到期、阻塞、待验证、待签收和证据纠正。
+- 支持关联外部工单编号及 HTTPS 链接。
+
+任务完成不等于 Case 已解决。提醒在页面读取时计算；没有后台定时邮件、消息推送或第三方工单双向同步。操作人绑定登录账号，负责人仍是业务文本标签。任务开始前检查协调器提出的前置任务是否完成并具有有效证据，任务验证需要 reviewer 权限。
+
+### 6.8 实际行动、结果与学习反馈
+
+- 分别记录实际行动、理由、与批准计划的偏差，以及结果与验证证据。
+- 记录采用追加方式，纠正关联原记录，而不是覆盖事实历史。
+- 明确区分人工批准、实际执行和验证结果，不能从批准推断执行。
+- 学习建议可分流为补充证据、Agent 改进、更新 Pill、新建 Pill 或无需修改。
+- 知识建议须引用当前行动与验证结果，并提供适用条件、限制及正反验证案例。
+- 专家可接受、拒绝或要求更多信息；接受时可修改建议正文。
+- 接受和导入前重新检查证据，新事实或结果纠正会阻断旧建议继续进入知识流程。
+- 多 Pill 案例必须选择需要改进的原始 Pill，不把临时汇总包发布为新知识。
+- 导入后仍需确认如何纳入规则与示例，再完成验证、审核和发布。
+
+### 6.9 Library 与版本治理
+
+- 保存发布内容、来源、验证、学习记录、审核说明及评测快照。
+- 按规则和行动 ID 对齐比较，展示版本差异。
+- 支持查看历史版本、激活旧版本、停用非生效版本及恢复可用状态。
+- 回滚只切换该 Pill 的生效版本，不改写历史 Case 报告，不删除后续版本。
+- 回滚后再次发布仍生成新版本号，不复用旧版本号。
+- SHA-256 校验用于发现快照意外变化，不能替代防篡改审计或权限系统。
+
+### 6.10 运营统计
+
+| 指标或功能 | 当前口径 |
+|---|---|
+| 知识复用率 | 使用了也被其他 Case 使用的已发布 Pill 的 Case 数 / 使用已发布 Pill 的 Case 数；同一 Case 重跑不算跨案例复用 |
+| 人工纠正率 | 最新人审包含部分支持、不支持、省略行动或修订建议的 Case 数 / 有人审记录的 Case 数 |
+| 知识缺口率 | 最新报告为无适用 Pill 或知识缺口的 Case 数 / 已分析 Case 数 |
+| 处理时长 | 当前已解决且有验证结果的 Case，从创建到结果发生时间的中位小时数；无效时间不纳入 |
+| 版本表现 | 案例量、分析完成率、人审纠正情况、已解决案例量及观察到的处理时长 |
+| 筛选 | UTC 创建日期范围、资产名称片段、类别 |
+| 月度趋势 | 按创建月份分组，展示该组 Case 的当前处理结果，不是历史快照 |
+| 导出 | CSV 与已应用筛选一致，包含口径和样本量，并防护常见表格公式注入 |
+
+空样本显示无数据，不生成虚构绩效。多 Pill 的共同结果不能直接归因于某个 Pill，版本间差异也不是因果意义上的改进证明。
+
+## 7. 数据存储和追溯
+
+| 数据对象 | 保存位置或归属 | 主要内容 |
+|---|---|---|
+| Case | 默认 `data/incidents.json` | 字段、消息、修订号、分析报告、人审、任务、实际记录和学习运行 |
+| Pill Studio 记录 | 默认 `data/pills.json` | 草稿、来源、发布版本、评测、学习导入及操作历史 |
+| 上传资料 | Pill 数据文件对应的 `.uploads` 目录 | 原文件，配合来源记录定位引用 |
+| 种子知识 | `pills/ahu-cooling.json` | 项目编写的 AHU 示例知识，初始状态不是已批准工程 SOP |
+
+可用 `DATA_FILE` 和 `PILL_DATA_FILE` 指定数据文件位置。实际运行数据和 `.env` 不随代码提交。
+
+并发控制以单进程写入队列和 revision 检查为主。事件与 Pill 分属不同文件，没有跨文件数据库事务；新增服务器与管理 CLI 共用的进程锁，但不支持多实例部署。账号存入 `data/users.json`，审计写入 `data/audit/`。操作身份经过登录认证，审计仍不是防篡改账本。离线备份包括用户、业务记录和原文件，恢复前校验摘要并保留旧目录。
+
+## 8. 主要 API 与代码入口
+
+| 能力 | 代表接口 | 主要后端文件 |
+|---|---|---|
+| Case 与输入 | `/api/incidents`、`/api/intake/analyze` | `server.js`、`incident-store.js`、`conversation.js` |
+| Triage | `/api/triage/:id/runs`、`/api/triage/:id/reports/:reportId/chat` | `triage.js`、`triage-agent.js` |
+| 人审 | `/api/review/:id` | `review.js` |
+| 任务 | `/api/tasks`、`/api/cases/:id/tasks`、`/api/cases/:id/tasks/:taskId` | `tasks.js` |
+| 行动与学习 | `/api/cases/:id/handling`、`/api/cases/:id/learning` | `learning.js`、`learning-agent.js` |
+| 学习审核与导入 | `/api/learning/:caseId/:runId/:proposalId/review`、对应的 `/apply` | `learning.js`、`pill-studio.js` |
+| Studio | `/api/studio/:id/save`、`/validate`、`/submit`、`/publish` | `pill-studio.js` |
+| 资料提取 | `/api/studio/:id/documents` 及具体文档的 `/analyze`、`/merge` | `document-parser.js`、`knowledge-agent.js` |
+| 模型评测 | `/api/studio/:id/save-evaluations`、`/evaluate` | `pill-evaluation.js` |
+| 版本 | `/api/library/:id`、`/compare`、具体版本的 `/activate`、`/disable`、`/restore` | `pill-versions.js`、`pill-studio.js` |
+| 统计 | `/api/operations`、`/api/operations/export` | `operations-metrics.js` |
+
+接口路径为索引，不替代字段协议；更新接口通常需要当前 revision，以及对应的人工确认和操作说明。
+
+## 9. 验证状态与实现边界
+
+### 9.1 已有验证
+
+- 本次增量完整自动化测试：**231 项通过，0 项失败**（基线为 211 项）。
+- 覆盖后端规则、证据校验、持久化、并发冲突、版本切换、API 和 JSDOM 页面交互。
+- 覆盖多 Pill 冲突、评测发布检查、任务证据、学习证据过期及统计导出等回归场景。
+- 用户反馈队友已完成验收与修复；此处不把该反馈等同于本报告另行执行的线上验收。
+- 自动化测试使用临时数据及模拟模型服务，不证明真实模型在所有场景中正确。
+- 本次未启动网页预览、未调用真实模型，未执行设备或工单操作。使用合成图片与扫描 PDF 完成本机真实 OCR 提取验证；登录、权限、协调器和异常路径通过临时数据与模拟服务测试。
+
+### 9.2 未实现或仍需生产化的部分
+
+| 方向 | 当前边界 |
+|---|---|
+| 数据基础设施 | 已有进程锁和停机备份恢复；无数据库、跨文件事务、多实例协调或定时备份 |
+| 真实业务集成 | 无 BMS、IoT 实时资产数据、外部工单创建与双向同步 |
+| 通知 | 无后台定时邮件、企业消息推送及自动超时升级服务 |
+| 评测深度 | 单次模型运行的观察结果；无重复采样统计、专家认证或全领域安全证明 |
+| 检索 | 无向量索引、Embedding 检索及语义召回排序 |
+
+本次新增模块的启动、权限矩阵、OCR 配置和备份恢复说明见 [security-and-operations.md](security-and-operations.md)。原 `.env` 和真实业务数据未迁移或覆盖。
+
+## 10. 总结
+
+当前系统已实现从知识来源到 Pill 发布、从事件分析到人工处理、再从处理结果回到知识更新的核心软件流程，并补充了多 Pill 编排、任务流转、版本治理、模型评测和运营指标。
+
+对外准确的描述是：**一个以版本化领域知识包为核心、由多个模型角色辅助、由确定性规则和人工审核控制的资产运营工作台 MVP。**
+
+不应描述为已经获得工程认证、能够自主处理全部领域问题、具备生产级权限和实时集成，或可以自动执行设备操作的系统。
