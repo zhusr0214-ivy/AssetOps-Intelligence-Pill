@@ -7,7 +7,7 @@ import { createKnowledgeCaptureAgent } from './knowledge-agent.js';
 import { mergeKnowledge } from './knowledge-merge.js';
 import { libraryToken, releaseHash, compareReleases } from './pill-versions.js';
 import { routingErrors } from './pill-routing.js';
-import { validateSuite, evaluatePill, evaluationGate } from './pill-evaluation.js';
+import { validateSuite, evaluatePill, evaluationGate, evaluationOptions, evaluationKey } from './pill-evaluation.js';
 import { createTriageAgent } from './triage-agent.js';
 
 const fail = (message, status = 422) => Object.assign(new Error(message), { status });
@@ -72,17 +72,18 @@ function contentFrom(body, id) {
   return { pill: { id, ...pick(body.pill, ['name', 'owner', 'source', 'scope', 'domain']), ...(applicability ? { applicability: structuredClone(applicability) } : {}), rules: body.pill.rules.map(r => pick(r, ['id', 'title', 'guidance', 'cardExplanation', 'actionIds'])), actions: body.pill.actions.map(a => ({ ...pick(a, ['id', 'title', 'instruction', 'owner', 'requiresApproval', 'ruleIds']), ...(a.coordinationKey || a.coordinationValue ? pick(a, ['coordinationKey', 'coordinationValue']) : {}) })), boundaries: body.pill.boundaries, escalationConditions: body.pill.escalationConditions }, sources: body.sources.map(s => pick(s, ['expert', 'reference', 'knowledge'])), examples: body.examples.map(s => pick(s, ['scenario', 'rationale', 'ruleIds', 'actionIds'])) };
 }
 
-export function createPillStudio(file, { captureAgent = createKnowledgeCaptureAgent(), parser = extractDocument, evaluationAgent = createTriageAgent() } = {}) {
+export function createPillStudio(file, { captureAgent = createKnowledgeCaptureAgent(), parser = extractDocument, evaluationAgent = createTriageAgent(), persistence } = {}) {
   let queue = Promise.resolve();
   const running = new Set();
   const evaluating = new Set();
   const seed = () => [{ id: ahuPill.id, revision: 0, state: 'draft', content: { pill: { ...structuredClone(ahuPill), domain: 'ahu_cooling' }, sources: [], examples: [] }, releases: [], events: [], validation: null }];
   async function read() { try { const records = JSON.parse(await readFile(file, 'utf8')); if (!Array.isArray(records)) throw new Error('Invalid Pill storage.'); return records; } catch (error) { if (error.code === 'ENOENT') return seed(); throw error; } }
   function mutate(operation) {
+    if (persistence) return persistence.mutate('pills', seed, operation);
     const task = queue.then(async () => { const records = await read(); const result = await operation(records); await mkdir(dirname(file), { recursive: true }); await writeFile(`${file}.tmp`, JSON.stringify(records, null, 2), { mode: 0o600 }); await rename(`${file}.tmp`, file); return result; });
     queue = task.catch(() => {}); return task;
   }
-  async function list() { await queue; return read(); }
+  async function list() { if (persistence) return persistence.read('pills', seed); await queue; return read(); }
   const find = (records, id, revision) => {
     const record = records.find(r => r.id === id); if (!record) throw fail('Pill not found.', 404);
     if (!Number.isInteger(revision) || revision !== record.revision) throw fail('Pill changed. Reload before continuing.', 409);
@@ -91,6 +92,21 @@ export function createPillStudio(file, { captureAgent = createKnowledgeCaptureAg
   };
   const service = {
     list,
+    reviewEvaluation(id, body) {
+      return mutate(records => {
+        const record = find(records, id, body?.revision), run = record.evaluations?.at(-1);
+        const baseline = record.releases.find(r => r.active && !r.disabled)?.pill || null;
+        if (!run || run.id !== body.runId || run.key !== evaluationKey(record, baseline)) throw fail('Evaluate the current draft and configuration before expert review.', 409);
+        if (run.expertReview) throw fail('This run has already been reviewed. Run another evaluation for a new review.', 409);
+        if (!body.authenticatedActor?.id) throw fail('Authenticated expert review is required.', 403);
+        if (record.contributorIds?.includes(body.authenticatedActor.id) || run.requestedBy === body.authenticatedActor.id) throw fail('A different reviewer must assess this evaluation.', 403);
+        if (!['accepted', 'rejected'].includes(body.decision) || !['scope', 'limitations', 'qualification', 'reference', 'notes'].every(k => str(body[k], 2000)) || body.confirmed !== true) throw fail('Decision, scope, limitations, expertise, evidence reference and confirmation are required.');
+        if (body.decision === 'accepted' && !run.passed) throw fail('Failed evaluations cannot be accepted as a release gate.');
+        run.expertReview = { decision: body.decision, scope: body.scope.trim(), limitations: body.limitations.trim(), qualification: body.qualification.trim(), reference: body.reference.trim(), notes: body.notes.trim(), actorId: body.authenticatedActor.id, reviewer: body.authenticatedActor.name, identityVerified: true, credentialsIndependentlyVerified: false, certification: false, at: new Date().toISOString(), key: run.key };
+        record.revision++; record.events.push({ action: 'evaluation_review', runId: run.id, actorId: body.authenticatedActor.id, decision: body.decision, at: run.expertReview.at });
+        return record;
+      });
+    },
     async evaluate(id, body) {
       if (evaluating.has(id)) throw fail('Evaluation is already running.', 409);
       evaluating.add(id);
@@ -98,6 +114,7 @@ export function createPillStudio(file, { captureAgent = createKnowledgeCaptureAg
         const record = find(await list(), id, body?.revision);
         if (!validateDraft(record.content).passed) throw fail('Complete structural validation before model evaluation.');
         const result = await evaluatePill(record, evaluationAgent);
+        result.requestedBy = body?.authenticatedActor?.id || null;
         await mutate(records => {
           const current = records.find(r => r.id === id);
           current.evaluations = [...(current.evaluations || []), result];
@@ -274,9 +291,11 @@ export function createPillStudio(file, { captureAgent = createKnowledgeCaptureAg
         } else {
           if (record.state === 'published') throw fail('Create a new draft before editing a published Pill.', 409);
           if (['validate', 'submit', 'publish'].includes(operation) && record.documents?.some(d => running.has(`${id}/${d.id}`))) throw fail('Wait for knowledge extraction to finish before validating or publishing.', 409);
+          if (['validate', 'submit', 'publish'].includes(operation) && persistence?.isLeased(`studio:analyze:${id}`)) throw fail('Knowledge extraction is running on another instance.', 409);
           if (operation === 'save-evaluations') {
             if (body.content) { record.content = contentFrom(body.content, id); invalidateLearning(record); }
             record.evaluationSuite = validateSuite(body.suite); record.evaluationRequired = true;
+            record.evaluationOptions = evaluationOptions(body.options || record.evaluationOptions);
             record.state = 'draft'; record.validation = null;
           } else if (operation === 'incorporate-learning') {
             const item = record.learningImports?.find(v => v.proposalId === body.proposalId);
@@ -299,6 +318,7 @@ export function createPillStudio(file, { captureAgent = createKnowledgeCaptureAg
           } else if (operation === 'publish') {
             if (body.authenticatedActor && record.contributorIds?.includes(body.authenticatedActor.id)) throw fail('A different reviewer must publish this draft. Authors cannot approve their own changes.', 403);
             if (evaluating.has(id)) throw fail('Wait for evaluation to finish before publishing.', 409);
+            if (persistence?.isLeased(`studio:evaluate:${id}`)) throw fail('Evaluation is running on another instance.', 409);
             if (evaluationGate(record).required && !evaluationGate(record).passed) throw fail('The current draft must pass its configured model evaluation before publication.');
             if (record.learningImports?.some(v => v.status === 'pending_incorporation')) throw fail('Confirm how imported learning was incorporated into rules and validation cases before publishing.');
             if (record.state !== 'in_review' || !validateDraft(record.content).passed) throw fail('Submit a valid draft for review before publishing.');
@@ -321,5 +341,8 @@ export function createPillStudio(file, { captureAgent = createKnowledgeCaptureAg
       });
     }
   };
+  if (persistence) for (const name of ['evaluate', 'analyze']) {
+    const original = service[name]; service[name] = (...args) => persistence.withLease(`studio:${name}:${args[0]}`, () => original(...args));
+  }
   return service;
 }

@@ -7,7 +7,7 @@ async function body(req) {
   try { const value = JSON.parse(text); if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(); return value; } catch { throw Object.assign(new Error('Invalid JSON object.'), { status: 400 }); }
 }
 
-export function secureApplication(handler, { auth, audit, readiness, maxActive = 12 }) {
+export function secureApplication(handler, { auth, audit, readiness, storage, maxActive = 12 }) {
   let active = 0, stopping = false, auditHealthy = true;
   const idle = [];
   const startedAt = new Date().toISOString();
@@ -51,6 +51,8 @@ export function secureApplication(handler, { auth, audit, readiness, maxActive =
       await audit.write({ requestId, phase: 'attempt', actorId: user.id, method: req.method, path: path.slice(0, 500) }); auditHealthy = true;
       req.authenticatedActor = { id: user.id, name: user.name };
       req.authenticatedRoles = user.roles;
+      if (path === '/api/admin/storage' && req.method === 'GET') return json(res, 200, storage ? storage.status() : { driver: 'json', migrationRequired: true });
+      if (path === '/api/admin/storage/backup' && req.method === 'POST') return json(res, storage ? 201 : 409, storage ? await storage.backup() : { error: 'Migrate to SQLite for online backups. JSON backups require the offline CLI.' });
       if (path === '/api/admin/users') {
         if (req.method === 'GET') return json(res, 200, { users: await auth.list() });
         if (req.method === 'POST') return json(res, 201, { user: await auth.create(await body(req)) });

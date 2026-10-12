@@ -100,11 +100,19 @@ export function createLearningService(store, studio, agent = createLearningAgent
       return proposal;
     },
     async apply(id, runId, proposalId, body) {
+      const apply = async () => {
       const i = await get(id), { run, proposal } = find(i, runId, proposalId);
       if (proposal.decision?.status !== 'accepted' || !['update_pill', 'new_pill'].includes(proposal.disposition)) throw fail('Only accepted knowledge proposals can enter Pill drafts.');
       if (!learningEvidenceCurrent(i, run, proposal)) throw fail('Learning evidence changed. Re-analyze before importing knowledge.', 409);
-      // The Pill store owns the import receipt. No second-file write can leave a half-applied proposal.
-      return studio.importLearning({ caseId: id, runId, proposal, snapshot: run.snapshot }, body);
+      // SQLite adds an atomic Case receipt; legacy JSON retains the Pill-owned receipt only.
+      const record = await studio.importLearning({ caseId: id, runId, proposal, snapshot: run.snapshot }, body);
+      if (store.transaction && !proposal.importReceipt) {
+        proposal.importReceipt = { pillId: record.id, at: now(), actorId: body.authenticatedActor?.id || null };
+        await store.update(id, { learningRuns: i.learningRuns }, i.revision || 0);
+      }
+      return record;
+      };
+      return store.transaction ? store.transaction(apply) : apply();
     }
   };
 }

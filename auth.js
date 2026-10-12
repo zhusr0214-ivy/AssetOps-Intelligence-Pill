@@ -11,7 +11,7 @@ const token = () => randomBytes(32).toString('hex');
 export function requiredRole(path, method) {
   if (path.startsWith('/api/admin/')) return ['admin'];
   if (method === 'GET') return roles;
-  if (/^\/api\/review\/[^/]+$/.test(path) || /^\/api\/library\//.test(path) || /\/learning\/[^/]+\/[^/]+\/[^/]+\/review$/.test(path) || /^\/api\/studio\/[^/]+\/(publish|return)$/.test(path)) return ['reviewer'];
+  if (/^\/api\/review\/[^/]+$/.test(path) || /^\/api\/library\//.test(path) || /\/learning\/[^/]+\/[^/]+\/[^/]+\/review$/.test(path) || /^\/api\/studio\/[^/]+\/(publish|return|review-evaluation)$/.test(path)) return ['reviewer'];
   if (/^\/api\/studio(?:\/|$)/.test(path) || /\/learning\/[^/]+\/[^/]+\/[^/]+\/apply$/.test(path)) return ['expert'];
   if (/^\/api\/cases\/[^/]+\/tasks\/[^/]+$/.test(path)) return ['operator', 'reviewer'];
   if (/^\/api\/(incidents|intake|triage|cases)(?:\/|$)/.test(path)) return ['operator'];
@@ -21,11 +21,12 @@ export function permitted(user, path, method) {
   return !user.disabled && (user.roles.includes('admin') || requiredRole(path, method).some(role => user.roles.includes(role)));
 }
 
-export function createAuth(file, { clock = Date.now, secure = process.env.COOKIE_SECURE === 'true', ttl = 8 * 3600000 } = {}) {
+export function createAuth(file, { clock = Date.now, secure = process.env.COOKIE_SECURE === 'true', ttl = 8 * 3600000, persistence } = {}) {
   let queue = Promise.resolve();
-  const sessions = new Map(), attempts = new Map();
-  async function read() { try { return JSON.parse(await readFile(file, 'utf8')); } catch (e) { if (e.code === 'ENOENT') return []; throw e; } }
+  const sessions = persistence?.sessions || new Map(), attempts = new Map();
+  async function read() { if (persistence) return persistence.read('users'); try { return JSON.parse(await readFile(file, 'utf8')); } catch (e) { if (e.code === 'ENOENT') return []; throw e; } }
   async function mutate(fn) {
+    if (persistence) return persistence.mutate('users', () => [], fn);
     const pending = queue.then(async () => {
       const users = await read(), result = await fn(users);
       await mkdir(dirname(file), { recursive: true, mode: 0o700 });
@@ -79,6 +80,7 @@ export function createAuth(file, { clock = Date.now, secure = process.env.COOKIE
       for (const [key, value] of attempts) if (value.until <= clock()) attempts.delete(key);
       for (const [key, value] of sessions) if (value.expires <= clock()) sessions.delete(key);
       const key = address, attempt = attempts.get(key) || { count: 0, until: clock() + 15 * 60000 };
+      if (persistence) persistence.consumeLoginAttempt(address, clock());
       if (attempt.count >= 10 || attempts.size >= 10000 || sessions.size >= 10000) throw fail('Too many attempts. Try again later.', 429);
       attempt.count++; attempts.set(key, attempt);
       await queue; const user = (await read()).find(u => u.username === username);
@@ -89,7 +91,8 @@ export function createAuth(file, { clock = Date.now, secure = process.env.COOKIE
       const current = (await read()).find(u => u.id === user.id);
       if (!current || current.disabled || current.hash !== user.hash || JSON.stringify(current.roles) !== JSON.stringify(user.roles)) throw fail('Account changed. Sign in again.', 401);
       attempts.delete(key);
-      const id = token(), csrf = token(); sessions.set(id, { userId: user.id, csrf, expires: clock() + ttl });
+      persistence?.clearLoginAttempts(address);
+      const id = token(), csrf = token(); sessions.set(id, { userId: user.id, csrf, expires: clock() + ttl, accountVersion: JSON.stringify([user.hash, user.roles, user.name]) });
       return { id, csrf, user: publicUser(user) };
     },
     async session(req) {
@@ -97,7 +100,7 @@ export function createAuth(file, { clock = Date.now, secure = process.env.COOKIE
       const session = sessions.get(id);
       if (!session || session.expires <= clock()) { sessions.delete(id); return null; }
       await queue; const user = (await read()).find(u => u.id === session.userId && !u.disabled);
-      return user ? { ...session, id, user: publicUser(user) } : null;
+      return user && session.accountVersion === JSON.stringify([user.hash, user.roles, user.name]) ? { ...session, id, user: publicUser(user) } : null;
     },
     logout(id) { sessions.delete(id); }
   };

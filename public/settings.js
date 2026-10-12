@@ -20,6 +20,17 @@ export async function renderSettings(view) {
   const { users } = await api('/api/admin/users'), health = await api('/api/admin/health'), { events } = await api('/api/admin/audit');
   container.innerHTML = `<section class="triage-section"><h3>Runtime health</h3><dl>${Object.entries(health).map(([key, value]) => `<dt>${e(key)}</dt><dd>${e(typeof value === 'object' ? JSON.stringify(value) : String(value))}</dd>`).join('')}</dl></section><section class="triage-section"><h3>Users</h3><ul>${users.map(u => `<li><button type="button" data-user="${e(u.id)}">${e(u.name)}</button> ${e(u.username)} / ${e(u.roles.join(', '))} / ${u.disabled ? 'Disabled' : 'Active'}</li>`).join('')}</ul><form id="user-editor"><h4 id="editor-title">New user</h4><input name="id" type="hidden"><label>Username<input name="username" required pattern="[a-z0-9][a-z0-9._-]{2,63}" autocomplete="off"></label><label>Display name<input name="name" maxlength="100" required></label><label>Password<input name="password" type="password" minlength="12" maxlength="128" autocomplete="new-password"></label><fieldset><legend>Roles</legend>${['admin', 'operator', 'expert', 'reviewer', 'viewer'].map(role => `<label><input type="checkbox" name="roles" value="${role}">${role}</label>`).join('')}</fieldset><label><input type="checkbox" name="disabled">Disabled</label><p role="alert" class="form-error"></p><button type="submit">Save user</button><button type="reset">New user</button></form></section><section class="triage-section"><h3>Recent audit events</h3><ul>${events.reverse().map(event => `<li>${e(event.at)} / ${e(event.method)} ${e(event.path)} / ${e(event.phase)} ${e(event.status || '')} / ${e(event.actorId || 'anonymous')}</li>`).join('')}</ul></section>`;
   const form = container.querySelector('form');
+  if (health.storageMode === 'sqlite') {
+    const storage = await api('/api/admin/storage'), panel = document.createElement('section'); panel.className = 'triage-section';
+    panel.innerHTML = `<h3>Database & backups</h3><p>${e(storage.driver)} / Integrity: ${e(storage.integrity)}</p><pre class="version-evidence">${e(JSON.stringify(storage.backups, null, 2))}</pre><button type="button">Create backup now</button><p role="status"></p>`;
+    container.prepend(panel);
+    panel.querySelector('button').onclick = async event => {
+      event.currentTarget.disabled = true;
+      try { const result = await api('/api/admin/storage/backup', { method: 'POST', body: '{}' }); panel.querySelector('[role=status]').textContent = `Backup created: ${result.name}`; }
+      catch (error) { panel.querySelector('[role=status]').textContent = error.message; }
+      finally { panel.querySelector('button').disabled = false; }
+    };
+  }
   container.querySelectorAll('[data-user]').forEach(button => { button.onclick = () => {
     const user = users.find(u => u.id === button.dataset.user);
     form.reset(); form.elements.id.value = user.id; form.elements.username.value = user.username; form.elements.username.readOnly = true; form.elements.name.value = user.name; form.elements.disabled.checked = user.disabled;

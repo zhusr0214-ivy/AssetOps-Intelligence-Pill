@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { readFile, mkdir, rm, access, writeFile } from "node:fs/promises";
+import { readFile, mkdir, access } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assessIntake, validateFields } from './intake.js';
@@ -19,6 +19,8 @@ import { createAudit } from './runtime.js';
 import { secureApplication } from './application.js';
 import { createCoordinationAgent } from './coordination-agent.js';
 import { modelFetch } from './model-runtime.js';
+import { openDatabase } from './database.js';
+import { registerInstance, startBackupScheduler, createDatabaseBackup } from './storage-operations.js';
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const publicDir = join(__dirname, "public");
@@ -101,6 +103,7 @@ export function createHandler(store = createIncidentStore(process.env.DATA_FILE 
  const review = createReviewService(store, () => studio.runtimePills());
  const learning = createLearningService(store, studio, learningAgent);
  const tasks = createTaskService(store, () => studio.runtimePills());
+ const atomic = fn => store.transaction ? store.transaction(fn) : fn();
  return async (req, res) => {
  try {
   const url = new URL(req.url, `http://${req.headers.host}`);
@@ -119,7 +122,7 @@ export function createHandler(store = createIncidentStore(process.env.DATA_FILE 
       const body = await readBody(req);
       if (body.operation === 'verify' && req.authenticatedRoles && !req.authenticatedRoles.some(role => ['admin', 'reviewer'].includes(role))) return sendJson(res, 403, { error: 'Reviewer permission is required to verify a task.' });
       if (body.operation !== 'verify' && req.authenticatedRoles && !req.authenticatedRoles.some(role => ['admin', 'operator'].includes(role))) return sendJson(res, 403, { error: 'Operator permission is required to update task execution.' });
-      return sendJson(res, taskId ? 200 : 201, { task: taskId ? await tasks.update(id, taskId, body) : await tasks.create(id, body) });
+      return sendJson(res, taskId ? 200 : 201, { task: await atomic(() => taskId ? tasks.update(id, taskId, body) : tasks.create(id, body)) });
     }
     return sendJson(res, 405, { error: 'Method not allowed.' });
   }
@@ -133,7 +136,7 @@ export function createHandler(store = createIncidentStore(process.env.DATA_FILE 
   const proposalMatch = path.match(/^\/api\/learning\/([^/]+)\/([^/]+)\/([^/]+)\/(review|apply)$/);
   if (proposalMatch && req.method === 'POST') {
     const [, id, runId, proposalId, operation] = proposalMatch, body = await readBody(req);
-    return sendJson(res, 200, operation === 'review' ? { proposal: await learning.decide(id, runId, proposalId, body) } : { record: await learning.apply(id, runId, proposalId, body) });
+    return sendJson(res, 200, operation === 'review' ? { proposal: await atomic(() => learning.decide(id, runId, proposalId, body)) } : { record: await learning.apply(id, runId, proposalId, body) });
   }
   if (path === '/api/library' && req.method === 'GET') return sendJson(res, 200, { pills: await studio.library() });
   const libraryMatch = path.match(/^\/api\/library\/([^/]+)(?:\/(compare|versions)(?:\/([^/]+)\/(activate|disable|restore))?)?$/);
@@ -166,6 +169,8 @@ export function createHandler(store = createIncidentStore(process.env.DATA_FILE 
   }
   const evaluationMatch = path.match(/^\/api\/studio\/([^/]+)\/evaluate$/);
   if (evaluationMatch && req.method === 'POST') return sendJson(res, 200, { record: await studio.evaluate(evaluationMatch[1], await readBody(req)) });
+  const evaluationReview = path.match(/^\/api\/studio\/([^/]+)\/review-evaluation$/);
+  if (evaluationReview && req.method === 'POST') return sendJson(res, 200, { record: await studio.reviewEvaluation(evaluationReview[1], await readBody(req)) });
   const studioMatch = path.match(/^\/api\/studio\/([^/]+)(?:\/(save|validate|submit|publish|return|fork|incorporate-learning|save-evaluations))?$/);
   if (studioMatch) {
     if (req.method === 'GET' && !studioMatch[2]) return sendJson(res, 200, { record: await studio.get(studioMatch[1]) });
@@ -177,7 +182,7 @@ export function createHandler(store = createIncidentStore(process.env.DATA_FILE 
   const reviewMatch = path.match(/^\/api\/review\/([^/]+)$/);
   if (reviewMatch) {
     if (req.method === 'GET') return sendJson(res, 200, await review.get(reviewMatch[1]));
-    if (req.method === 'POST') return sendJson(res, 201, { review: await review.submit(reviewMatch[1], await readBody(req)) });
+    if (req.method === 'POST') { const body = await readBody(req); return sendJson(res, 201, { review: await atomic(() => review.submit(reviewMatch[1], body)) }); }
     return sendJson(res, 405, { error: 'Method not allowed.' });
   }
   if (path === '/api/triage' && req.method === 'GET') return sendJson(res, 200, { cases: await triage.list() });
@@ -186,7 +191,8 @@ export function createHandler(store = createIncidentStore(process.env.DATA_FILE 
     if (req.method === 'GET' && !triageMatch[2]) return sendJson(res, 200, await triage.get(triageMatch[1]));
     if (req.method === 'POST' && triageMatch[2]) {
       const body = await readBody(req);
-      return sendJson(res, 200, { report: await triage.run(triageMatch[1], body?.revision) });
+      const run = () => triage.run(triageMatch[1], body?.revision);
+      return sendJson(res, 200, { report: await (store.withLease ? store.withLease(`triage:${triageMatch[1]}`, run) : run()) });
     }
     return sendJson(res, 405, { error: 'Method not allowed.' });
   }
@@ -254,19 +260,34 @@ export function createHandler(store = createIncidentStore(process.env.DATA_FILE 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   loadLocalEnv();
   const port = process.env.PORT || 5173, host = process.env.HOST || '127.0.0.1';
-  const directory = join(__dirname, 'data'), lock = join(__dirname, '.assetops-lock');
-  try { await mkdir(lock); }
-  catch { console.error('Data directory is locked. Stop the other process; after an abnormal exit verify it has stopped before removing .assetops-lock.'); process.exit(1); }
-  await mkdir(directory, { recursive: true, mode: 0o700 });
-  await writeFile(join(lock, 'owner.json'), JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }));
-  const auth = createAuth(join(directory, 'users.json'));
-  const application = secureApplication(createHandler(undefined, undefined, undefined, undefined, undefined, createCoordinationAgent()), {
+  const directory = join(__dirname, 'data'), databaseFile = join(directory, 'assetops.sqlite');
+  const mode = process.env.STORAGE_DRIVER || 'json';
+  if (!['json', 'sqlite'].includes(mode)) throw new Error('STORAGE_DRIVER must be json or sqlite.');
+  let exists = false; try { await access(databaseFile); exists = true; } catch (error) { if (error.code !== 'ENOENT') throw error; }
+  if ((mode === 'sqlite') !== exists) throw new Error(exists ? 'Migrated database found. Set STORAGE_DRIVER=sqlite; do not restart against stale JSON files.' : 'Run npm run admin -- migrate-sqlite with the server stopped first.');
+  if (mode === 'sqlite' && (process.env.DATA_FILE || process.env.PILL_DATA_FILE)) throw new Error('SQLite mode requires the default data directory.');
+  const schedule = { intervalMinutes: Number(process.env.BACKUP_INTERVAL_MINUTES || 360), keep: Number(process.env.BACKUP_KEEP || 7) };
+  if (mode === 'sqlite' && (!Number.isInteger(schedule.intervalMinutes) || schedule.intervalMinutes < 1 || !Number.isInteger(schedule.keep) || schedule.keep < 1 || schedule.keep > 100)) throw new Error('Invalid backup schedule.');
+  const releaseInstance = await registerInstance(__dirname, mode);
+  let persistence = null;
+  try {
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    persistence = mode === 'sqlite' ? openDatabase(databaseFile) : null;
+    if (persistence && !persistence.initialized()) throw new Error('Database migration is incomplete. Inspect it before starting.');
+  } catch (error) { persistence?.close(); await releaseInstance(); throw error; }
+  const auth = createAuth(join(directory, 'users.json'), { persistence });
+  const store = persistence ? createIncidentStore(join(directory, 'incidents.json'), { persistence }) : undefined;
+  const studio = persistence ? createPillStudio(join(directory, 'pills.json'), { persistence }) : undefined;
+  const backups = persistence ? startBackupScheduler(persistence, directory, join(__dirname, 'backups'), schedule) : null;
+  const application = secureApplication(createHandler(store, undefined, undefined, studio, undefined, createCoordinationAgent()), {
     auth, audit: createAudit(join(directory, 'audit')),
-    readiness: async () => { await access(directory); return { storage: 'accessible', users: (await auth.list()).length, modelConfigured: Boolean(process.env.SOCLAAS_BASE_URL && process.env.SOCLAAS_API_KEY), modelRuntime: modelFetch.status(), ocrEnabled: process.env.OCR_ENABLED === 'true', storageMode: 'single-process-json' }; }
+    storage: persistence ? { status: () => ({ ...persistence.status(), backups: backups.status() }), backup: () => createDatabaseBackup(persistence, directory, join(__dirname, 'backups'), { keep: Number(process.env.BACKUP_KEEP || 7) }) } : null,
+    readiness: async () => { await access(directory); return { storage: 'accessible', users: (await auth.list()).length, modelConfigured: Boolean(process.env.SOCLAAS_BASE_URL && process.env.SOCLAAS_API_KEY), modelRuntime: modelFetch.status(), ocrEnabled: process.env.OCR_ENABLED === 'true', storageMode: mode, backups: backups?.status() || 'offline-manual' }; }
   });
   const server = createServer(application);
   server.requestTimeout = 120000; server.headersTimeout = 15000; server.keepAliveTimeout = 5000;
-  const cleanup = () => rm(lock, { recursive: true, force: true });
+  let cleanupPromise;
+  const cleanup = () => cleanupPromise ||= (async () => { await backups?.stop(); try { persistence?.close(); } finally { await releaseInstance(); } })();
   let closing = false;
   const shutdown = () => {
     if (closing) return; closing = true; application.stop();

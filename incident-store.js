@@ -2,9 +2,10 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
-export function createIncidentStore(file) {
+export function createIncidentStore(file, { persistence } = {}) {
   let queue = Promise.resolve();
   async function read() {
+    if (persistence) return persistence.read('incidents');
     try {
       const data = JSON.parse(await readFile(file, 'utf8'));
       if (!Array.isArray(data)) throw new Error('Invalid incident storage.');
@@ -15,6 +16,7 @@ export function createIncidentStore(file) {
     }
   }
   function mutate(operation) {
+    if (persistence) return persistence.mutate('incidents', () => [], operation);
     const task = queue.then(async () => {
       const records = await read();
       const result = operation(records);
@@ -28,6 +30,8 @@ export function createIncidentStore(file) {
     return task;
   }
   return {
+    transaction: persistence ? fn => persistence.transaction(fn) : null,
+    withLease: persistence ? (key, fn) => persistence.withLease(key, fn) : async (key, fn) => fn(),
     async list() { await queue; return read(); },
     appendTriageReport(id, report) {
       return mutate(records => {

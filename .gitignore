@@ -1,5 +1,6 @@
 data/
 .assetops-lock/
+.assetops-instances/
 backups/
 data.before-*/
 data.restore-*/

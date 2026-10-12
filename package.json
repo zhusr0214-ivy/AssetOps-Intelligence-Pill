@@ -13,7 +13,7 @@
     "check:knowledge": "node scripts/check-knowledge.js"
   },
   "engines": {
-    "node": ">=22.13.0"
+    "node": ">=24.0.0"
   },
   "dependencies": {
     "mammoth": "1.13.0",

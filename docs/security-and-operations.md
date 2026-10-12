@@ -45,7 +45,9 @@ same draft, even with the admin role. Legacy drafts lack a complete historical
 contributor list. This is application identity, not engineering accreditation.
 
 Passwords use per-user salted scrypt hashes. Sessions are opaque, server-side,
-expire after 8 hours and are revoked on restart. Cookies use HttpOnly/SameSite=Strict;
+expire after 8 hours. JSON sessions are revoked on restart; SQLite sessions are
+shared between instances and survive restart, but backups and restoration clear them.
+Cookies use HttpOnly/SameSite=Strict;
 set `COOKIE_SECURE=true` behind HTTPS. Mutations require a session CSRF token, and
 cross-origin mutations are rejected. Login has a per-connection-IP attempt limit.
 Forwarded IP headers are not trusted; behind a proxy the shared proxy IP can hit
@@ -107,7 +109,7 @@ chart or engineering-drawing interpretation. Original sources remain downloadabl
 
 ## Runtime Safeguards
 
-- Shared model transport: three concurrent calls, 1 MB response ceiling, bounded
+- Model transport shared within each process: three concurrent calls, 1 MB response ceiling, bounded
   deadlines; three consecutive transport/429/5xx failures open a 30-second circuit.
   No hidden retry loop or duplicate automatic mutations. Existing evidence repair
   remains bounded. Failed domain workflows retain their existing retry paths.
@@ -121,10 +123,12 @@ chart or engineering-drawing interpretation. Original sources remain downloadabl
   failure to persist the attempt stops processing. Post-action audit failures mark
   health degraded but cannot undo a committed operation. Audit files are not tamper-proof;
   archive/rotate old files externally. The UI reads the last 100 events from a bounded tail.
-- A project-root `.assetops-lock` directory prevents multiple cooperating server/admin
-  processes. Graceful shutdown drains requests before releasing it. After a crash,
-  inspect `owner.json`, verify no process is running, then manually remove the stale
-  lock. It is deliberately not stolen automatically.
+- JSON mode holds a project-root `.assetops-lock` directory for its lifetime.
+  SQLite servers register in `.assetops-instances` and share database leases;
+  administration takes the project lock and refuses any registered instances.
+  Graceful shutdown drains requests and backups before releasing its registration.
+  After a crash, inspect lock/marker ownership and verify the associated process is
+  stopped before removing stale registrations. They are never stolen automatically.
 
 ## Offline Backup and Restore
 
@@ -142,10 +146,12 @@ if required. Protect backup directories as sensitive data; they are not encrypte
 
 Restore validates every manifest path/hash before replacing data, stages the restored
 tree, and retains the entire old directory as `data.before-<id>` for recovery. It
-refuses symbolic links and traversal paths. Restart revokes all sessions. Restoring
+refuses symbolic links and traversal paths. Restoration clears all sessions. Restoring
 a backup also restores its user accounts, role assignments and password hashes.
 The SHA-256 manifest detects corruption, not a maliciously rewritten backup.
 
-No database migration, clustered deployment, durable job queue, scheduled backup,
-SSO/MFA, alerting service or high-availability guarantee is included. This remains a
-single-process deployment with stronger MVP controls, not a production certification.
+SQLite migration, same-host coordination, online snapshots and scheduled backups
+are available; see [Data and Evaluation](data-and-evaluation.md). JSON mode retains
+its original single-process limits. There is no cross-host cluster, durable job
+queue, offsite backup, SSO/MFA, alerting service or high-availability guarantee.
+These are MVP controls, not a production certification.
