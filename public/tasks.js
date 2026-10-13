@@ -10,7 +10,7 @@ export async function renderTasks(root, id) {
   try {
     const data = await api(id ? `/api/cases/${encodeURIComponent(id)}/tasks` : '/api/tasks');
     if (!view.isConnected) return;
-    view.innerHTML = `<header class="workspace-heading"><h2 class="case-page-title">${id ? 'Case tasks' : 'Task queue'}</h2>${id ? `<a href="/cases/${e(id)}/handling">Actual actions and outcomes</a>` : ''}</header><div class="list-toolbar"><label>Assignee / task<input type="search" id="task-search"></label><label>Status<select id="task-status"><option value="">All statuses</option>${options(Object.entries(labels))}</select></label><label>Reminder<select id="task-reminder"><option value="">All tasks</option>${options(['overdue', 'due_soon', 'blocked', 'verification_due', 'evidence_corrected', 'escalation_pending'].map(v => [v, v.replaceAll('_', ' ')]))}</select></label></div><div class="table-scroll"><table class="incident-table"><thead><tr><th>Task / Case</th><th>Assignee</th><th>Due</th><th>Status / Progress</th><th>Reminder</th></tr></thead><tbody></tbody></table></div><div class="task-detail"></div><div class="task-create"></div>`;
+    view.innerHTML = `<header class="workspace-heading"><h2 class="case-page-title">${id ? 'Case tasks' : 'Task queue'}</h2><p>Task completion confirms the assigned action. It does not mean the incident is resolved.</p>${id ? `<a href="/cases/${e(id)}/handling">Actual actions and outcomes</a>` : ''}</header><div class="list-toolbar"><label>Assignee / task<input type="search" id="task-search"></label><label>Status<select id="task-status"><option value="">All statuses</option>${options(Object.entries(labels))}</select></label><label>Reminder<select id="task-reminder"><option value="">All tasks</option>${options(['overdue', 'due_soon', 'blocked', 'verification_due', 'evidence_corrected', 'escalation_pending'].map(v => [v, v.replaceAll('_', ' ')]))}</select></label></div><div class="table-scroll"><table class="incident-table"><thead><tr><th>Task / Case</th><th>Assignee</th><th>Due</th><th>Status / Progress</th><th>Reminder</th></tr></thead><tbody></tbody></table></div><div class="task-detail"></div><div class="task-create"></div>`;
     const paint = () => {
       const query = view.querySelector('#task-search').value.toLowerCase(), status = view.querySelector('#task-status').value, reminder = view.querySelector('#task-reminder').value;
       const rows = data.tasks.filter(t => (!status || t.status === status) && (!reminder || t.reminder === reminder) && [t.title, t.assignee, t.escalation?.owner, t.caseTitle].join(' ').toLowerCase().includes(query));
@@ -63,6 +63,10 @@ export async function renderTasks(root, id) {
             preview.textContent = record ? `${recordText(record)}${record.occurredAt ? ` — ${new Date(record.occurredAt).toLocaleString()}` : ''}` : 'Select a record to read its full evidence.';
           };
           picker.onchange = showEvidence; showEvidence();
+          if (!recordsFor(op === 'submit' ? 'action' : 'outcome').length) {
+            preview.textContent = op === 'submit' ? 'No action evidence yet. Record what was done first, then return here and reload tasks.' : 'No verified outcome yet. Record and verify an outcome first, then return here and reload tasks.';
+            const link = document.createElement('a'); link.href = `/cases/${encodeURIComponent(id)}/handling`; link.textContent = op === 'submit' ? 'Create action record in Handling & Outcome' : 'Create verified outcome in Handling & Outcome'; preview.after(link);
+          }
         }
         if (op === 'assign') { form.elements.assignee.value = task.assignee; const date = new Date(task.dueAt); form.elements.dueAt.value = new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16); }
       };

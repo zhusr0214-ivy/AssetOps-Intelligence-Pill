@@ -11,7 +11,7 @@ const requestedFields = ['asset', 'observations', 'affectedScope', 'occurredAt',
 const unknown = value => !value || /^(?:unknown|not sure|n\/a|\u4e0d\u77e5\u9053|\u4e0d\u6e05\u695a|\u672a\u77e5)[.!\u3002]?$/i.test(value.trim());
 const questions = {
   asset: 'Confirm the affected asset identifier with the site team before running an asset-specific analysis.',
-  observations: 'Provide available temperature readings, setpoint, alarms or other observed equipment conditions.',
+  observations: 'Provide the specific missing equipment observations identified in this report. Keep already reported readings and explicit unknowns; do not repeat measurements solely because the observation field is requested.',
   affectedScope: 'Confirm the affected areas and any nearby areas that are operating normally.',
   occurredAt: 'Confirm when the issue started, if known.',
   impact: 'Confirm the effect on occupants or services.'

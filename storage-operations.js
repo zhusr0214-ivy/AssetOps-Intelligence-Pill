@@ -7,7 +7,14 @@ import { createPillStudio } from './pill-studio.js';
 
 export async function registerInstance(root, mode) {
   const gate = join(root, '.assetops-lock'), instances = join(root, '.assetops-instances');
-  await mkdir(gate);
+  try { await mkdir(gate); }
+  catch (error) {
+    if (error.code !== 'EEXIST') throw error;
+    let owner; try { owner = JSON.parse(await readFile(join(gate, 'owner.json'), 'utf8')); } catch {}
+    let stale = false;
+    if (Number.isInteger(owner?.pid) && owner.pid > 0) { try { process.kill(owner.pid, 0); } catch (e) { stale = e.code === 'ESRCH'; } }
+    throw Object.assign(new Error(stale ? `Stale startup lock from exited process ${owner.pid}. With all servers stopped, rename ${gate} to preserve it, then restart.` : `Startup lock already exists${owner?.pid ? ` (process ${owner.pid})` : ''}. Stop the owning server before retrying; do not delete a live lock.`), { code: 'ASSETOPS_LOCKED' });
+  }
   try {
     await mkdir(instances, { recursive: true, mode: 0o700 });
     const others = await readdir(instances);

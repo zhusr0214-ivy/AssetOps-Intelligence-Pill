@@ -4,6 +4,7 @@ import { pillMarkup } from './library.js';
 import { renderLearning } from './learning.js';
 import { renderCaptureEntry, captureMarkup, bindCapture } from './knowledge.js';
 import { evaluationMarkup, bindEvaluation } from './evaluation.js';
+import { bindStudioFlow } from './studio-flow.js';
 
 const layouts = {
   sources: [['expert', 'Expert / contributor'], ['reference', 'Source / interview reference'], ['knowledge', 'Captured experience', 'text']],
@@ -126,16 +127,36 @@ export async function renderStudio(root, path, navigate) {
     let { record } = await api(`/api/studio/${encodeURIComponent(match[1])}`);
     const { candidates: allCandidates } = await api('/api/learning');
     const candidates = allCandidates.filter(c => c.pillId === record.id);
-    let dirty = false, busy = false;
+    let dirty = false, busy = false, pendingNext = null;
     function paint() {
       if (!view.isConnected) return;
       view.innerHTML = editorMarkup(record); dirty = false;
       view.querySelector('.workspace-heading').insertAdjacentHTML('afterend', pillProgressMarkup(record));
+      view.querySelector('.next-step')?.remove();
       view.querySelector(':scope > .pill-record')?.setAttribute('data-page-panel', 'draft');
       view.querySelector('[data-operation="fork"]')?.setAttribute('data-page-panel', 'draft');
       view.querySelector(':scope > .triage-section:not(form):not(details)')?.setAttribute('data-page-panel', 'publication');
       view.querySelector('#studio-status').insertAdjacentHTML('afterend', `<section data-page-panel="publication" class="triage-section"><h3>Publication status</h3><p>${e(record.state.replaceAll('_', ' '))}</p><a href="/studio/${e(record.id)}?view=draft">Draft content</a></section>`);
       view.querySelector('#studio-status').insertAdjacentHTML('afterend', `<div data-page-panel="evaluation">${evaluationMarkup(record)}</div>`);
+      if (record.state !== 'published') {
+        const bar = document.createElement('aside'); bar.className = 'studio-savebar';
+        bar.innerHTML = '<span data-save-message role="status">All changes saved</span><button type="button" class="primary" data-save-fixed>Save draft</button><button type="button" data-save-continue hidden>Save and continue</button>';
+        view.prepend(bar);
+        bar.querySelector('[data-save-fixed]').onclick = () => operate('save', {content:readContent(view.querySelector('#pill-editor'))});
+        bar.querySelector('[data-save-continue]').onclick = async () => {
+          const next = pendingNext; pendingNext = null;
+          if (!next || busy) return;
+          const errorEl = view.querySelector('#studio-error');
+          if (view.querySelector('#evaluation-suite')?.dataset.dirty) { errorEl.textContent = 'Save the changed test suite using its Save suite button before continuing.'; errorEl.hidden = false; errorEl.scrollIntoView?.({block:'center'}); return; }
+          busy = true; bar.querySelectorAll('button').forEach(b=>b.disabled=true); bar.querySelector('[data-save-message]').textContent = 'Saving draft...';
+          try {
+            record = (await api(`/api/studio/${encodeURIComponent(record.id)}/save`, {method:'POST',body:JSON.stringify({content:readContent(view.querySelector('#pill-editor')),revision:record.revision})})).record;
+            dirty = false; bar.querySelector('[data-save-message]').textContent = 'Saved. Continuing...';
+            busy = false; await next();
+          } catch(error) { errorEl.textContent = error.message; errorEl.hidden = false; bar.querySelector('[data-save-message]').textContent='Save failed — edits retained'; }
+          finally {busy=false;bar.querySelectorAll('button').forEach(b=>b.disabled=false);}
+        };
+      }
       bindEvaluation(view, record, operate, () => performCapture(async () => (await api(`/api/studio/${record.id}`)).record, 'Refreshing evaluation...'));
       view.querySelector('#studio-status').insertAdjacentHTML('afterend', `<div data-page-panel="sources">${captureMarkup(record)}</div>`);
       bindCapture(view, record, performCapture);
@@ -157,7 +178,7 @@ export async function renderStudio(root, path, navigate) {
         section.innerHTML = `<summary>Related improvement candidates (${candidates.length})</summary>${candidates.map((c, index) => `<article class="studio-version"><a href="/cases/${e(c.incidentId)}/review">${e(c.incidentId)}</a><p>${e(c.notes)}</p>${c.proposals ? `<p>${e(c.proposals)}</p>` : ''}${form ? `<button type="button" data-source="${index}">Add to expert sources</button>` : ''}</article>`).join('')}`;
         view.append(section);
       }
-      const markDirty = () => { dirty = true; view.querySelector('#studio-status').textContent = 'Unsaved changes'; };
+      const markDirty = () => { dirty = true; view.querySelector('#studio-status').textContent = 'Unsaved changes'; const message=view.querySelector('[data-save-message]'); if(message) message.textContent='Unsaved draft changes'; };
       view.querySelectorAll('[data-source]').forEach(button => button.onclick = () => {
         const candidate = candidates[Number(button.dataset.source)];
         form.querySelector('[data-rows="sources"]').insertAdjacentHTML('beforeend', row('sources', { expert: '', reference: `${candidate.incidentId} / ${candidate.reviewId} / ${candidate.id}`, knowledge: [candidate.notes, candidate.proposals, ...(candidate.omittedActions || []).map(a => `${a.title}: ${a.reason}`)].filter(Boolean).join('\n') }));
@@ -178,23 +199,40 @@ export async function renderStudio(root, path, navigate) {
         event.preventDefault(); const approval = event.target;
         operate(event.submitter.value, { ...Object.fromEntries(new FormData(approval)), expertConfirmed: approval.elements.expertConfirmed.checked });
       });
+      bindStudioFlow(view,record,{subpages:true});
+    }
+    function offerSave(next) {
+      pendingNext = next;
+      const bar = view.querySelector('.studio-savebar');
+      if (!bar) return;
+      bar.querySelector('[data-save-message]').textContent = 'Save your draft changes before the next step.';
+      bar.querySelector('[data-save-continue]').hidden = false;
+      bar.scrollIntoView?.({block:'nearest'});
     }
     async function performCapture(task, message) {
       if (busy) return;
       let errorEl = view.querySelector('#studio-error'); errorEl.hidden = true;
-      if (dirty || view.querySelector('#evaluation-suite')?.dataset.dirty) { errorEl.textContent = 'Save your draft edits and test suite before changing knowledge sources.'; errorEl.hidden = false; return; }
+      if (dirty) { offerSave(() => performCapture(task,message)); return; }
+      if (view.querySelector('#evaluation-suite')?.dataset.dirty) { errorEl.textContent = 'Save your test suite before changing knowledge sources.'; errorEl.hidden = false; errorEl.scrollIntoView?.({block:'center'}); return; }
       busy = true;
       const controls = [...view.querySelectorAll('button, input, textarea, select')].map(el => [el, el.disabled]);
       controls.forEach(([el]) => { el.disabled = true; });
       view.querySelector('#studio-status').textContent = message;
       try {
-        record = await task(); paint();
+        record = await task(record);
+        if (!record.evaluationGate) {
+          try { record = (await api(`/api/studio/${encodeURIComponent(record.id)}`)).record; }
+          catch { /* Keep the saved extraction; show an unavailable state only if refresh fails. */ }
+        }
+        paint();
         if (view.isConnected) view.querySelector('#studio-status').textContent = 'Knowledge source updated.';
       } catch (error) {
         if (view.isConnected) {
           // Failed model calls update source status and revision; reload those without losing draft edits.
-          try { const result = await api(`/api/studio/${encodeURIComponent(record.id)}`); if (result.record.revision !== record.revision) { record = result.record; paint(); } } catch { /* Keep the original error if refresh also fails. */ }
-          errorEl = view.querySelector('#studio-error'); errorEl.textContent = error.message; errorEl.hidden = false;
+          try { const result = await api(`/api/studio/${encodeURIComponent(record.id)}`); if (result.record.revision !== record.revision) { record = result.record;
+        if (!record.evaluationGate) { try { record = (await api(`/api/studio/${encodeURIComponent(record.id)}`)).record; } catch { /* Preserve committed result; unavailable status is displayed explicitly. */ } }
+        paint(); } } catch { /* Keep the original error if refresh also fails. */ }
+          errorEl = view.querySelector('#studio-error'); errorEl.textContent = error.message; errorEl.hidden = false; errorEl.scrollIntoView?.({ block: 'center' });
           view.querySelector('#studio-status').textContent = '';
           controls.forEach(([el, disabled]) => { el.disabled = disabled; });
         }
@@ -205,14 +243,17 @@ export async function renderStudio(root, path, navigate) {
       const errorEl = view.querySelector('#studio-error'); errorEl.hidden = true;
       if (view.querySelector('#evaluation-suite')?.dataset.dirty && operation !== 'save-evaluations') { errorEl.textContent = 'Save the test suite before continuing.'; errorEl.hidden = false; return; }
       if (dirty && operation === 'save-evaluations') data.content = readContent(view.querySelector('#pill-editor'));
-      if (dirty && !['save', 'save-evaluations'].includes(operation)) { errorEl.textContent = 'Save your changes before continuing.'; errorEl.hidden = false; return; }
+      if (dirty && !['save', 'save-evaluations'].includes(operation)) { offerSave(() => operate(operation,data)); return; }
       busy = true; view.querySelectorAll('button, input, textarea, select').forEach(el => { el.disabled = true; });
+      const saveMessage=view.querySelector('[data-save-message]'); if(saveMessage && operation==='save') saveMessage.textContent='Saving draft...';
       if (operation === 'evaluate') view.querySelector('#studio-status').textContent = 'Evaluating draft and active baseline...';
       try {
         const result = await api(`/api/studio/${encodeURIComponent(record.id)}/${operation}`, { method: 'POST', body: JSON.stringify({ ...data, revision: record.revision }) });
-        record = result.record; paint();
+        record = result.record;
+        if (!record.evaluationGate) { try { record = (await api(`/api/studio/${encodeURIComponent(record.id)}`)).record; } catch { /* Preserve committed result; unavailable status is displayed explicitly. */ } }
+        paint();
         if (view.isConnected) view.querySelector('#studio-status').textContent = operation === 'save' ? 'Draft saved.' : 'Pill updated.';
-      } catch (error) { if (view.isConnected) { errorEl.textContent = error.message; errorEl.hidden = false; view.querySelectorAll('button, input, textarea, select').forEach(el => { el.disabled = false; }); } }
+      } catch (error) { if (view.isConnected) { errorEl.textContent = error.message; errorEl.hidden = false; errorEl.scrollIntoView?.({ block: 'center' }); view.querySelectorAll('button, input, textarea, select').forEach(el => { el.disabled = false; }); } }
       finally { busy = false; }
     }
     paint();

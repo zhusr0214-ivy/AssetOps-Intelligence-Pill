@@ -680,3 +680,44 @@ input, select, textarea { accent-color: #262626; }
   .workspace-tabs a { font-size: 14px; }
   .sidebar { border-right: 0; border-bottom: 1px solid var(--line); }
 }
+
+/* Evaluation forms remain readable in narrow panels. */
+#evaluation-review, #evaluation-suite, #evaluation-options { display: grid; gap: 16px; min-width: 0; }
+#evaluation-review label, #evaluation-suite label, #evaluation-options label { display: grid; gap: 6px; min-width: 0; }
+#evaluation-review :is(textarea,input,select), #evaluation-suite :is(textarea,input,select), #evaluation-options :is(input,select) { box-sizing: border-box; width: 100%; min-width: 0; padding: 10px; border: 1px solid var(--line); border-radius: 4px; font: inherit; }
+#evaluation-review textarea, #evaluation-suite textarea { min-height: 100px; resize: vertical; }
+#evaluation-review label:has(input[type="checkbox"]), #evaluation-options label:has(input[type="checkbox"]) { display: flex; align-items: flex-start; gap: 10px; }
+#evaluation-review input[type="checkbox"], #evaluation-options input[type="checkbox"] { width: auto; flex-shrink: 0; margin-top: 4px; }
+#evaluation-suite [data-evaluation-case] { display: grid; gap: 12px; min-width: 0; }
+[data-suite-feedback]:empty, [data-record-error][hidden] { display: none; }
+[data-suite-feedback] { color: var(--ink); padding: 12px; background: #fff3d6; overflow-wrap: anywhere; }
+
+/* Compact sticky draft toolbar; buttons remain reachable in narrow panels. */
+.studio-savebar { position: sticky; top: 8px; z-index: 30; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 12px; margin: 0 0 16px; background: #fff; border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 2px 8px #1720330a; font-size: 13px; line-height: 1.4; }
+.studio-savebar [data-save-message] { flex: 1; min-width: 140px; color: var(--muted); display: flex; align-items: center; gap: 8px; }
+.studio-savebar [data-save-message]::before { content: ''; width: 6px; height: 6px; background: var(--teal); border-radius: 50%; flex-shrink: 0; }
+.studio-savebar button { padding: 6px 12px; min-height: 32px; font-size: 13px; line-height: 1.4; border-radius: 6px; white-space: nowrap; }
+.studio-savebar button[hidden] { display: none; }
+#studio-status:empty { display: none; }
+#studio-status { font-size: 13px; color: var(--muted); margin: 8px 0; }
+.capture-analyze { display: block; margin: 18px 0; padding: 12px 20px; font-weight: 700; }
+
+.studio-next-step { margin: 16px 0 20px; padding: 18px; background: #eaf6f4; border: 1px solid #bcded8; border-radius: 10px; display: flex; flex-wrap: wrap; gap: 14px; align-items: center; }
+.studio-next-step > div { flex: 1; min-width: 220px; }
+.studio-eyebrow { color: #08776f; font-size: 11px; font-weight: 800; letter-spacing: .08em; }
+.studio-next-step h3 { margin: 6px 0; font-size: 19px; }
+.studio-next-step p { margin: 6px 0 0; font-size: 14px; line-height: 1.55; }
+.studio-next-step nav { width: 100%; display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 8px; }
+.studio-next-step nav button { background: white; border: 1px solid #bcded8; padding: 10px; font-size: 12px; line-height: 1.4; text-align: left; }
+.studio-next-step nav button[aria-current] { background: #087c75; color: white; font-weight: 700; }
+.studio-stage { border: 1px solid var(--line); border-radius: 10px; margin: 12px 0; background: white; scroll-margin-top: 72px; }
+.studio-stage > summary { cursor: pointer; padding: 16px; font-size: 17px; font-weight: 700; }
+.studio-stage > summary small { float: right; font-size: 12px; font-weight: 400; color: var(--muted); margin-top: 4px; }
+.studio-stage[open] > summary { border-bottom: 1px solid var(--line); color: #08776f; }
+.studio-stage-body { padding: 0 16px 16px; }
+.studio-stage-body .triage-section { margin: 0; padding: 16px 0; }
+.capture-candidate { border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin: 10px 0; }
+.capture-candidate > label { margin: 0 0 8px; font-weight: 600; }
+.candidate-evidence > summary { font-size: 13px; color: #08776f; cursor: pointer; padding: 6px 0; }
+.capture-selection-status { padding: 10px 12px; background: #f1f6fa; border-radius: 6px; font-size: 13px; }
+@media(max-width:800px) { .studio-next-step nav { grid-template-columns: repeat(2,minmax(0,1fr)); } .studio-stage > summary small { float:none; display:block; } }

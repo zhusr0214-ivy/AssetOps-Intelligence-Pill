@@ -1,7 +1,7 @@
 import { modelFetch } from './model-runtime.js';
 import { randomUUID } from 'node:crypto';
 
-export const capturePromptVersion = 'knowledge-capture-v2-domain';
+export const capturePromptVersion = 'knowledge-capture-v3-reviewed-links';
 const fail = (message, status = 502) => Object.assign(new Error(message), { status });
 const types = ['scope', 'evidence', 'rule', 'action', 'boundary', 'escalation', 'example'];
 const prompt = `You are the Knowledge Capture Agent for a domain Pill Studio. Use the supplied domain (default ahu_cooling) as the extraction scope.
@@ -14,6 +14,34 @@ Link actions to rule candidates with relatedRuleKeys; link rules to actions with
 questions and conflicts contain at most 10 short strings each. Candidate text at most 2000 characters, quotes at most 1600 each. Use the source language. Return JSON only.`;
 const text = (v, max) => typeof v === 'string' && v.trim().length > 0 && v.length <= max;
 const list = (v, max) => Array.isArray(v) && v.length <= max;
+
+// Model references are draft metadata. Resolve only existing rule/action keys;
+// preserve rejected links as visible review warnings, never synthesize knowledge.
+export function normalizeCaptureLinks(value) {
+  if (!Array.isArray(value?.candidates)) return value;
+  const copy = structuredClone(value), keys = new Map(copy.candidates.map(c => [c?.key, c?.type]));
+  for (const c of copy.candidates) {
+    if (!c || !Array.isArray(c.missing)) continue;
+    const rules = [], actions = [], warnings = [];
+    for (const name of ['relatedRuleKeys', 'relatedActionKeys']) {
+      const refs = c[name] ?? [];
+      if (!Array.isArray(refs) || refs.length > 10) continue;
+      for (const key of refs) {
+        const type = typeof key === 'string' ? keys.get(key) : undefined;
+        if (type === 'rule') rules.push(key);
+        else if (type === 'action') actions.push(key);
+        else warnings.push(`Review required: ignored unsupported association ${String(key).slice(0,80)} (${type || 'not present'}). Establish any required rule/action link manually.`);
+      }
+    }
+    if (['relatedRuleKeys','relatedActionKeys'].every(n => c[n] == null || (Array.isArray(c[n]) && c[n].length <= 10))) {
+      c.relatedRuleKeys = [...new Set(rules)]; c.relatedActionKeys = [...new Set(actions)];
+      const notes = [...new Set(warnings)];
+      c.missing = [...c.missing, ...notes].slice(0,10);
+      if (notes.length && Array.isArray(copy.questions)) copy.questions = [...copy.questions, `Candidate ${c.key}: some proposed associations were rejected; verify links before merging.`].slice(0,10);
+    }
+  }
+  return copy;
+}
 
 export function validateCapture(value, blocks) {
   if (!value || !list(value.candidates, 10) || !list(value.questions, 10) || !list(value.conflicts, 10) || ![...value.questions, ...value.conflicts].every(v => text(v, 1000))) throw fail('Knowledge Capture Agent returned an invalid structure. Retry extraction.');
@@ -29,7 +57,7 @@ export function validateCapture(value, blocks) {
       return { blockId: ref.blockId, location: source.get(ref.blockId).location, quote: ref.quote };
     });
     const related = (refs, type) => {
-      if (!list(refs, 10) || !refs.every(key => keys.get(key)?.type === type)) throw fail('Knowledge candidate links are invalid. Retry extraction.');
+      if (!list(refs, 10) || !refs.every(key => keys.get(key)?.type === type)) throw fail(`Knowledge candidate ${candidate.key}: expected up to 10 ${type} keys referencing existing ${type} candidates in this batch. Check relatedRuleKeys / relatedActionKeys and retry extraction.`);
       return [...new Set(refs.map(key => keys.get(key).id))];
     };
     return { id: keys.get(candidate.key).id, type: candidate.type, title: candidate.title.trim(), text: candidate.text.trim(), evidence, missing: candidate.missing, relatedRuleIds: related(candidate.relatedRuleKeys, 'rule'), relatedActionIds: related(candidate.relatedActionKeys, 'action') };
@@ -55,11 +83,16 @@ export function createKnowledgeCaptureAgent({ env = process.env, fetchImpl = mod
     const result = { candidates: [], questions: [], conflicts: [], promptVersion: capturePromptVersion, model: env.SOCLAAS_MODEL?.trim() || 'default' };
     for (const blocks of batches) {
       try {
-        const response = await fetchImpl(url, { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(timeoutMs), headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: result.model, messages: [{ role: 'system', content: prompt }, { role: 'user', content: JSON.stringify({ filename: document.name, domain: document.domain || 'ahu_cooling', blocks }) }] }) });
+        const messages = [{ role: 'system', content: prompt }, { role: 'user', content: JSON.stringify({ filename: document.name, domain: document.domain || 'ahu_cooling', blocks }) }];
+        let validated;
+        for (let attempt = 0; attempt < 2; attempt++) {
+        const response = await fetchImpl(url, { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(timeoutMs), headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: result.model, messages }) });
         if (!response.ok) throw fail(response.status === 429 ? 'Model rate limit reached. Retry later.' : response.status === 401 || response.status === 403 ? 'Model access failed. Check server credentials.' : 'Knowledge extraction request failed.', response.status === 429 ? 503 : 502);
         const body = await response.json(); const choice = body.choices?.[0], raw = choice?.message?.content;
         if (choice?.finish_reason === 'length' || typeof raw !== 'string' || raw.length > 65000) throw fail('The model returned an incomplete extraction. Retry with a shorter source.');
-        const validated = validateCapture(JSON.parse(raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')), blocks);
+        try { validated = validateCapture(normalizeCaptureLinks(JSON.parse(raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, ''))), blocks); break; }
+        catch (error) { if (attempt || !error.status) throw error; messages.push({ role: 'assistant', content: raw }, { role: 'user', content: `Correct the JSON structure and references: ${error.message} Preserve exact source citations and all safety conditions. Use only keys of candidates present in this batch; do not invent links.` }); }
+        }
         for (const name of ['candidates', 'questions', 'conflicts']) result[name].push(...validated[name]);
       } catch (error) {
         if (error.status) throw error;

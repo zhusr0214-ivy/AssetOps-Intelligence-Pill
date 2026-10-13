@@ -104,7 +104,11 @@ export function createTriageAgent({ env = process.env, fetchImpl = modelFetch, t
       if (choice?.finish_reason === 'length' || typeof content !== 'string' || content.length > 60000) throw new Error();
       const result = JSON.parse(content.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, ''));
       const unmatched = unmatchedEvidence(result, snapshot.fields);
-      if (!unmatched.length) return result;
+      const allowedMissing = ['asset', 'observations', 'affectedScope', 'occurredAt', 'impact'];
+      const structuralErrors = [];
+      if (!Array.isArray(result.missingFields) || result.missingFields.some(field => !allowedMissing.includes(field))) structuralErrors.push('missingFields must contain only asset, observations, affectedScope, occurredAt, impact; request specific missing details in narrative text, never invent new field names.');
+      if (!Array.isArray(result.hypotheses) || result.hypotheses.some(h => !Array.isArray(h.evidence) || h.evidence.length < 1 || h.evidence.length > 6)) structuralErrors.push('Each hypothesis needs 1 to 6 exact evidence quotes. Omit unsupported hypotheses.');
+      if (!unmatched.length && !structuralErrors.length) return result;
       // Give the model one chance to copy actual source text. The server still
       // performs the final strict validation; unsupported quotes are never accepted.
       try {
@@ -115,7 +119,7 @@ export function createTriageAgent({ env = process.env, fetchImpl = modelFetch, t
           { role: 'system', content: prompt },
           { role: 'user', content: JSON.stringify({ case: snapshot.fields, pill }) },
           { role: 'assistant', content },
-          { role: 'user', content: `Revise the JSON. These evidence quotes are not exact substrings of any case field: ${JSON.stringify(unmatched)}. Copy each quote verbatim from one named case field, or omit a hypothesis when no real case evidence supports it. Preserve all other safety constraints.` }
+          { role: 'user', content: `Revise the JSON. ${structuralErrors.join(" ")} These evidence quotes are not exact substrings of any case field: ${JSON.stringify(unmatched)}. Copy each quote verbatim from one named case field, or omit a hypothesis when no real case evidence supports it. Preserve all other safety constraints.` }
         ] })
       });
       if (!repair.ok) return result;

@@ -165,7 +165,7 @@ test('unsaved draft blocks source operations and save reads owner correctly desp
   const owner = form.querySelector('[name="owner"]'); owner.value = 'Correct knowledge owner'; owner.dispatchEvent(new window.Event('input', { bubbles: true }));
   const review = root.querySelector('[data-capture-review]'); review.elements.reviewer.value = 'Expert'; review.elements.confirmed.checked = true;
   review.dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
-  assert.equal(calls, 0); assert.ok(root.querySelector('#studio-error').textContent.includes('Save your draft'));
+  assert.equal(calls, 0); assert.ok(root.querySelector('[data-save-message]').textContent.includes('Save your draft')); assert.equal(root.querySelector('[data-save-continue]').hidden,false);
   form.dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
   await until(() => root.textContent.includes('Draft saved.'));
   assert.equal(saved.content.pill.owner, 'Correct knowledge owner');
@@ -182,4 +182,36 @@ test('failed AI extraction refreshes revision and offers retry without clearing 
   await until(() => root.textContent.includes('Retry extraction'));
   assert.equal(root.querySelector('[data-analyze]').disabled, false);
   assert.ok(root.textContent.includes('Do not change setpoints.'));
+});
+
+
+test('save and continue persists edits then analyzes using the new revision', async t => {
+  let current=record(); current.documents[0].status='ready'; const calls=[];
+  const {root,window}=browser(t,async(url,options)=>{
+    if(url==='/api/learning') return {candidates:[]};
+    if(options.method==='POST') {
+      const body=JSON.parse(options.body);calls.push({url,body});
+      if(url.endsWith('/save')) current={...current,revision:3,content:body.content};
+      if(url.endsWith('/analyze')) {assert.equal(body.revision,3);current={...current,revision:4,documents:[{...current.documents[0],status:'extracted'}]};}
+    }
+    return {record:current};
+  });
+  await renderStudio(root,`/studio/${ahuPill.id}`,()=>{});
+  const domain=root.querySelector('[name=domain]');domain.value='lift_fault';domain.dispatchEvent(new window.Event('input',{bubbles:true}));
+  root.querySelector('[data-analyze]').click();assert.equal(calls.length,0);
+  root.querySelector('[data-save-continue]').click();await until(()=>calls.length===2 && root.textContent.includes('Knowledge source updated.'));
+  assert.ok(calls[0].url.endsWith('/save'));assert.ok(calls[1].url.endsWith('/analyze'));assert.equal(calls[0].body.content.pill.domain,'lift_fault');
+});
+
+
+test('source response refreshes evaluation gate before painting the completed extraction', async t => {
+  let current=record(),gets=0;current.documents[0].status='ready';
+  const {root}=browser(t,async(url,options)=>{
+    if(url==='/api/learning') return {candidates:[]};
+    if(url.endsWith('/analyze')) {current={...current,revision:3,documents:[{...current.documents[0],status:'extracted'}]};return {record:current};}
+    gets++;return {record:{...current,evaluationGate:{state:'not_enabled',required:false}}};
+  });
+  await renderStudio(root,`/studio/${ahuPill.id}`,()=>{});
+  root.querySelector('[data-analyze]').click();await until(()=>root.textContent.includes('Knowledge source updated.'));
+  assert.equal(gets,2);assert.ok(root.textContent.includes('Evaluation gate not enabled'));assert.ok(!root.textContent.includes('Evaluation status unavailable'));
 });

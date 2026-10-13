@@ -18,8 +18,9 @@ import { fileURLToPath } from 'node:url';
 async function setup(t) {
   const root = await mkdtemp(join(tmpdir(), 'assetops-db-')); const data = join(root, 'data'); await mkdir(data);
   const db = openDatabase(join(data, 'assetops.sqlite')); db.markInitialized();
-  t.after(async () => { db.close(); await rm(root, { recursive: true, force: true }); });
-  return { root, data, db, store: createIncidentStore('unused', { persistence: db }), studio: createPillStudio(join(data, 'pills.json'), { persistence: db }) };
+  const connections = [db];
+  t.after(async () => { for (const connection of connections.reverse()) connection.close(); await rm(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); });
+  return { root, data, db, connections, store: createIncidentStore('unused', { persistence: db }), studio: createPillStudio(join(data, 'pills.json'), { persistence: db }) };
 }
 test('SQLite stores preserve IDs, revisions and seeds; transactions roll back every collection', async t => {
   const { db, store, studio } = await setup(t);
@@ -31,7 +32,7 @@ test('SQLite stores preserve IDs, revisions and seeds; transactions roll back ev
   assert.equal((await store.list())[0].revision, 1); assert.equal((await studio.list())[0].id, p.id); assert.equal((await studio.list()).length, 2); assert.equal(db.status().integrity, 'ok');
 });
 test('two connections detect stale writes without losing the other instance update', async t => {
-  const { db, store } = await setup(t), other = openDatabase(db.file); t.after(() => other.close());
+  const { db, store, connections } = await setup(t), other = openDatabase(db.file); connections.push(other);
   const second = createIncidentStore('unused', { persistence: other }), i = await store.create({ title: 'Initial', revision: 0 });
   let release, ready; const paused = new Promise(r => { release = r; }), entered = new Promise(r => { ready = r; });
   const transaction = db.transaction(async () => { await store.list(); ready(); await paused; await store.update(i.id, { title: 'Stale' }, 0); });
@@ -39,7 +40,7 @@ test('two connections detect stale writes without losing the other instance upda
   await assert.rejects(transaction, { status: 409 }); assert.equal((await store.list())[0].title, 'Other instance');
 });
 test('shared leases reject duplicate work and release after failure', async t => {
-  const { db } = await setup(t), other = openDatabase(db.file); t.after(() => other.close());
+  const { db, connections } = await setup(t), other = openDatabase(db.file); connections.push(other);
   await db.withLease('evaluation:pill', async () => { assert.equal(other.isLeased('evaluation:pill'), true); await assert.rejects(other.withLease('evaluation:pill', async () => {}), { status: 409 }); });
   await assert.rejects(db.withLease('evaluation:pill', async () => { throw new Error('failure'); }));
   assert.equal(other.isLeased('evaluation:pill'), false);
@@ -60,7 +61,7 @@ test('a separate process shares commits, and a lost lease fences writes', async 
   } finally { raw.close(); }
 });
 test('accounts and sessions work across instances, with shared revocation and login throttle', async t => {
-  const { db } = await setup(t), other = openDatabase(db.file); t.after(() => other.close());
+  const { db, connections } = await setup(t), other = openDatabase(db.file); connections.push(other);
   const a = createAuth('unused', { persistence: db }), b = createAuth('unused', { persistence: other });
   const user = await a.create({ username: 'testadmin', name: 'Admin', roles: ['admin'], password: 'long-password-1234' }, true);
   const session = await a.login(user.username, 'long-password-1234'), req = { headers: { cookie: `assetops_session=${session.id}` } };
@@ -101,7 +102,7 @@ test('instance registration prevents offline administration while allowing SQLit
   const first = await registerInstance(root, 'sqlite'), second = await registerInstance(root, 'sqlite');
   await assert.rejects(assertOffline(root), /Stop all/); await assert.rejects(registerInstance(root, 'json'), /SQLite instances/);
   await first(); await second(); await assertOffline(root);
-  const json = await registerInstance(root, 'json'); await assert.rejects(registerInstance(root, 'sqlite'), { code: 'EEXIST' }); await json();
+  const json = await registerInstance(root, 'json'); await assert.rejects(registerInstance(root, 'sqlite'), { code: 'ASSETOPS_LOCKED' }); await json();
 });
 test('learning import and case receipt commit together and remain idempotent', async t => {
   const { store, studio } = await setup(t);
@@ -123,7 +124,7 @@ test('offline CLI migrates, backs up and restores in an isolated project copy', 
   for (const name of await readdir(source)) if (name.endsWith('.js') || name === 'package.json') await copyFile(join(source, name), join(root, name));
   await cp(join(source, 'scripts'), join(root, 'scripts'), { recursive: true });
   await cp(join(source, 'pills'), join(root, 'pills'), { recursive: true });
-  await symlink(join(source, 'node_modules'), join(root, 'node_modules'), 'dir');
+  try { await symlink(join(source, 'node_modules'), join(root, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir'); } catch (error) { if (error.code !== 'EPERM') throw error; await cp(join(source, 'node_modules'), join(root, 'node_modules'), { recursive: true }); }
   await mkdir(join(root, 'data'));
   await writeFile(join(root, 'data', 'incidents.json'), JSON.stringify([{ id: 'cli-case', title: 'Original', revision: 0 }]));
   const env = { ...process.env, ASSETOPS_ADMIN_PASSWORD: 'original-test-password' }; for (const key of ['DATA_FILE', 'PILL_DATA_FILE', 'STORAGE_DRIVER', 'SOCLAAS_API_KEY']) delete env[key];
