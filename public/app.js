@@ -10,10 +10,23 @@ import { renderOperations } from './operations.js';
 import { canonicalPath, caseRoute } from './routes.js';
 import { requireSession, bindAccountIdentity, currentUser } from './session.js';
 import { renderSettings } from './settings.js';
+import { workQueueMarkup } from './workflow.js';
+import { navigationMarkup, selectSubview, syncPageTabs } from './subpages.js';
+import { syncWorkspaceHeader } from './workspace-shell.js';
 
 const nav = document.querySelector('#nav');
 const pageRoot = document.querySelector('#page');
-const tabs = (items, active) => `<nav class="workspace-tabs" aria-label="Workspace views">${items.map(([href, label, value]) => `<a href="${href}" ${active === value ? 'aria-current="page"' : ''}>${label}</a>`).join('')}</nav>`;
+let modules = [];
+let renderedPath = '';
+function updateNavigation() {
+  nav.innerHTML = navigationMarkup(modules, canonicalPath(window.location.pathname), window.location.search, currentUser().roles.includes('admin'));
+}
+function updateSubview() {
+  const path = window.location.pathname;
+  syncPageTabs(pageRoot, path, window.location.search, currentUser().roles.includes('admin'));
+  selectSubview(pageRoot, window.location.search, path.startsWith('/library') ? 'content' : path === '/settings' ? 'account' : 'draft');
+  syncWorkspaceHeader(pageRoot, path, currentUser());
+}
 function navigate(path) { window.history.pushState({}, '', canonicalPath(path)); renderRoute(); }
 
 async function overview(view) {
@@ -21,10 +34,9 @@ async function overview(view) {
   if (!view.isConnected) return;
   const pending = reviews.cases.filter(c => c.state === 'pending');
   const rows = cases => cases.map(c => `<li><a href="/cases/${e(c.id)}">${e(c.title)}</a><span>${e(c.asset)} / ${e(c.priority)}</span></li>`).join('');
-  view.innerHTML = `<header class="workspace-heading"><h2>Operations Overview</h2><a class="button primary" href="/cases/new">New case</a></header><div class="overview-metrics">${[['/cases', 'Cases', incidents.incidents.length], ['/cases/review', 'Pending review', pending.length], ['/studio/improvements', 'Improvement candidates', studio.candidates.length], ['/library', 'Approved Pills', library.pills.length]].map(([url, label, count]) => `<a href="${url}"><span>${label}</span><strong>${count}</strong></a>`).join('')}</div><section class="triage-section"><h3>Awaiting review</h3>${pending.length ? `<ul class="overview-list">${pending.slice(0, 8).map(c => `<li><a href="/cases/${e(c.id)}/review">${e(c.title)}</a><span>${e(c.asset)} / ${e(c.priority)}</span></li>`).join('')}</ul>` : '<p class="empty-state">No cases awaiting review.</p>'}</section><section class="triage-section"><h3>Recent cases</h3>${incidents.incidents.length ? `<ul class="overview-list">${rows(incidents.incidents.slice(0, 8))}</ul>` : '<p class="empty-state">No cases yet.</p>'}</section>`;
+  view.innerHTML = `<header class="workspace-heading"><h2>Operations Overview</h2><a class="button primary" href="/cases/new">New case</a></header>${workQueueMarkup(incidents.incidents, reviews.cases, studio.records || [])}<div class="overview-metrics">${[['/cases', 'Cases', incidents.incidents.length], ['/cases/review', 'Pending review', pending.length], ['/studio/improvements', 'Improvement candidates', studio.candidates.length], ['/library', 'Approved Pills', library.pills.length]].map(([url, label, count]) => `<a href="${url}"><span>${label}</span><strong>${count}</strong></a>`).join('')}</div><section class="triage-section"><h3>Recent cases</h3>${incidents.incidents.length ? `<ul class="overview-list">${rows(incidents.incidents.slice(0, 8))}</ul>` : '<p class="empty-state">No cases yet.</p>'}</section>`;
   view.querySelector('.overview-metrics a[href="/studio/improvements"] strong').textContent = String(studio.candidates.length + (studio.pendingLearningProposals || 0));
   view.querySelector('.overview-metrics a[href="/library"] strong').textContent = String(new Set(library.pills.map(p => p.id)).size);
-  const insights = document.createElement('div'); view.append(insights); await renderOperations(insights);
 }
 
 async function renderRoute() {
@@ -32,16 +44,17 @@ async function renderRoute() {
   const path = canonicalPath(window.location.pathname);
   if (path !== window.location.pathname) window.history.replaceState({}, '', path + window.location.search + window.location.hash);
   const active = path.split('/')[1];
-  nav.querySelectorAll('a').forEach(link => { link.classList.toggle('active', link.dataset.route === active); if (link.dataset.route === active) link.setAttribute('aria-current', 'page'); else link.removeAttribute('aria-current'); });
+  updateNavigation();
+  if (renderedPath === path && pageRoot.querySelector('[data-page-panel]')) { updateSubview(); return; }
+  renderedPath = path;
   const view = document.createElement('section'); view.className = 'workspace-view'; pageRoot.replaceChildren(view);
   view.innerHTML = '<p role="status">Loading...</p>';
+  syncWorkspaceHeader(pageRoot, path, currentUser());
   try {
     if (active === 'cases') {
       const route = caseRoute(path); if (!route) throw new Error('Case page not found.');
-      const base = route.id ? `/cases/${route.id}` : '/cases';
-      view.innerHTML = `<header class="workspace-heading"><h2>Case Workspace</h2>${route.id ? '<a href="/cases">All cases</a>' : ''}</header>${tabs([[base, route.id ? 'Case information' : 'All cases', 'intake'], [`${base}/triage`, 'AI analysis', 'triage'], [`${base}/review`, 'Human review', 'review'], ...(route.id ? [[`${base}/handling`, 'Handling & Outcome', 'handling']] : [])], route.stage)}<div class="case-stage"></div>`;
+      view.innerHTML = `<header class="workspace-heading"><h2>Case Workspace</h2>${route.id ? '<a href="/cases">All cases</a>' : ''}</header><div class="case-stage"></div>`;
       const content = view.querySelector('.case-stage');
-      const taskLink = document.createElement('a'); taskLink.href = `${base}/tasks`; taskLink.textContent = 'Tasks'; if (route.stage === 'tasks') taskLink.setAttribute('aria-current', 'page'); view.querySelector('.workspace-tabs').append(taskLink);
       if (route.stage === 'tasks') await renderTasks(content, route.id);
       else if (route.stage === 'handling') await renderHandling(content, route.id);
       else if (route.stage === 'triage') await renderTriage(content, route.legacy);
@@ -49,9 +62,11 @@ async function renderRoute() {
       else await renderIncidents(content, route.legacy, navigate);
     } else if (path === '/settings') await renderSettings(view);
     else if (path === '/overview') await overview(view);
+    else if (path === '/overview/analytics') { view.innerHTML = '<header class="workspace-heading"><h2>Operational analytics</h2></header><div class="analytics-content"></div>'; await renderOperations(view.querySelector('.analytics-content')); }
     else if (path === '/studio' || path.startsWith('/studio/')) await renderStudio(view, path, navigate);
     else if (path === '/library' || path.startsWith('/library/')) await renderLibraryPage(view, path, window.location.search);
     else throw new Error('Page not found.');
+    updateSubview();
   } catch (error) { if (view.isConnected) view.innerHTML = `<p class="form-error" role="alert">${e(error.message)}</p>`; }
 }
 
@@ -64,11 +79,8 @@ document.addEventListener('click', event => {
 window.addEventListener('popstate', renderRoute);
 try {
   if (await requireSession(pageRoot)) {
-  new MutationObserver(() => bindAccountIdentity(pageRoot)).observe(pageRoot, { childList: true, subtree: true });
-  document.querySelector('.context strong').textContent = currentUser().name;
-  const { modules } = await api('/api/modules');
-  nav.innerHTML = modules.map((module, index) => `<a href="/${e(module.id)}" class="nav-item" data-route="${e(module.id)}"><span>0${index + 1}</span>${e(module.title)}</a>`).join('');
-  nav.insertAdjacentHTML('beforeend', '<a href="/settings" class="nav-item" data-route="settings">Account & System</a>');
+  new MutationObserver(() => { bindAccountIdentity(pageRoot); updateSubview(); }).observe(pageRoot, { childList: true, subtree: true });
+  ({ modules } = await api('/api/modules'));
   const top = document.createElement('button'); top.className = 'page-top'; top.textContent = '↑ Back to top'; top.hidden = true;
   top.onclick = () => window.scrollTo({ top: 0, behavior: 'instant' }); document.body.append(top);
   window.addEventListener('scroll', () => { top.hidden = window.scrollY < 500; }, { passive: true });

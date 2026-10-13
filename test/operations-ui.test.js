@@ -34,6 +34,8 @@ test('assignment sends reviewed action, revision and user fields; failure retain
     return current;
   });
   await renderTasks(root, 'INC-test'); const form = root.querySelector('.task-create form');
+  assert.equal(root.querySelector('.workspace-heading button'), null);
+  assert.equal(root.querySelectorAll('.task-workspace > .list-toolbar > label').length, 3);
   form.elements.actor.value = 'Dispatcher'; form.elements.assignee.value = 'Engineer'; form.elements.dueAt.value = '2026-10-12T10:00';
   form.dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
   await until(() => root.textContent.includes('Case changed.'));
@@ -47,6 +49,7 @@ test('task detail submits explicit verification and only current evidence is sel
   let submitted; const current = { ...data(), reviews: [], tasks: [{ ...task(), status: 'awaiting_verification' }], handlingRecords: [{ id: 'old', kind: 'outcome', verified: true }, { id: 'new', kind: 'outcome', verified: true, corrects: 'old', notes: 'Verified outcome' }] };
   const { root, window } = browser(t, async (url, options) => { if (options.method === 'POST') submitted = JSON.parse(options.body); return current; });
   await renderTasks(root, 'INC-test'); root.querySelector('[data-task]').click(); const form = root.querySelector('.task-detail form');
+  assert.ok(form.querySelector('[data-reload]'));
   form.elements.operation.value = 'verify'; form.elements.operation.dispatchEvent(new window.Event('change'));
   assert.equal(form.elements.outcomeRecordId.querySelector('[value=old]'), null);
   form.elements.outcomeRecordId.value = 'new'; form.elements.confirmed.checked = true; form.elements.actor.value = 'Expert'; form.elements.notes.value = 'Checked result';
@@ -57,6 +60,8 @@ test('task detail submits explicit verification and only current evidence is sel
 test('task queue filters by assignee, state and reminder', async t => {
   const { root, window } = browser(t, async () => ({ tasks: [{ ...task(), incidentId: 'INC-test' }, { ...task(), id: 'TASK-2', incidentId: 'INC-other', status: 'blocked', assignee: 'Other', reminder: 'overdue' }] }));
   await renderTasks(root); assert.equal(root.querySelectorAll('tbody tr').length, 2);
+  assert.equal(root.querySelector('.workspace-heading button'), null);
+  assert.equal(root.querySelectorAll('.task-workspace > .list-toolbar > label').length, 3);
   const filter = root.querySelector('#task-reminder'); filter.value = 'overdue'; filter.dispatchEvent(new window.Event('input'));
   assert.equal(root.querySelectorAll('tbody tr').length, 1); assert.ok(root.querySelector('tbody').textContent.includes('Other'));
   const search = root.querySelector('#task-search'); search.value = 'nobody'; search.dispatchEvent(new window.Event('input')); assert.ok(root.textContent.includes('No matching tasks.'));

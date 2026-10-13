@@ -1,0 +1,52 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { JSDOM } from 'jsdom';
+import { readFileSync } from 'node:fs';
+
+test('router deep links, subpage navigation and browser back preserve the current form', async t => {
+  const dom = new JSDOM(readFileSync(new URL('../public/index.html', import.meta.url), 'utf8'), { url: 'http://localhost/settings?view=users' });
+  dom.window.scrollTo = () => {};
+  const previous = Object.fromEntries(['window', 'document', 'MutationObserver', 'fetch', 'FormData'].map(key => [key, globalThis[key]]));
+  const calls = [];
+  const user = { id: 'admin', username: 'admin', name: 'Admin', roles: ['admin'] };
+  Object.assign(globalThis, { window: dom.window, document: dom.window.document, MutationObserver: dom.window.MutationObserver, FormData: dom.window.FormData, fetch: async path => {
+    calls.push(path);
+    const responses = {
+      '/api/auth/session': { user, csrf: 'token' },
+      '/api/modules': { modules: ['overview', 'cases', 'studio', 'library'].map(id => ({ id, title: id })) },
+      '/api/admin/users': { users: [user] }, '/api/admin/health': { storageMode: 'json' }, '/api/admin/audit': { events: [] },
+      '/api/incidents': { incidents: [] }, '/api/review': { cases: [] }, '/api/studio': { records: [], candidates: [] }, '/api/library': { pills: [] }
+    };
+    assert.ok(Object.hasOwn(responses, path), `Unexpected API call: ${path}`);
+    return new Response(JSON.stringify(responses[path]), { headers: { 'Content-Type': 'application/json' } });
+  } });
+  t.after(() => { dom.window.close(); Object.assign(globalThis, previous); });
+  await import('../public/app.js');
+  assert.equal(document.querySelector('#page-title').textContent, 'Account & System');
+  assert.equal(document.querySelector('[data-account-role]').textContent, 'Administrator');
+  assert.equal(document.querySelector('[data-account-username]').textContent, 'admin');
+  assert.equal(document.querySelector('.context').hidden, false);
+  assert.equal(document.querySelectorAll('#nav .nav-icon').length, 5);
+  assert.equal(document.querySelector('.brand strong').textContent, 'AssetOps');
+  assert.ok(!document.querySelector('.topbar').textContent.includes('Commercial Real Estate'));
+  const form = document.querySelector('#user-editor');
+  assert.equal(form.closest('[data-page-panel]').hidden, false);
+  form.elements.name.value = 'Unsaved account name';
+  document.querySelector('#page [data-page-tabs] a[href="/settings?view=runtime"]').click();
+  assert.equal(form.closest('[data-page-panel]').hidden, true);
+  await new Promise(resolve => { window.addEventListener('popstate', resolve, { once: true }); window.history.back(); });
+  assert.equal(document.querySelector('#user-editor'), form);
+  assert.equal(form.elements.name.value, 'Unsaved account name');
+  assert.equal(form.closest('[data-page-panel]').hidden, false);
+  assert.equal(calls.filter(path => path === '/api/admin/users').length, 1);
+  document.querySelector('#nav a[href="/overview"]').click();
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(document.querySelector('#nav .subnav'), null);
+  assert.equal(document.querySelector('#nav [aria-current=page]').getAttribute('href'), '/overview');
+  assert.equal(document.querySelectorAll('#page [data-page-tabs]').length, 1);
+  assert.equal(document.querySelector('#page [data-page-tabs] [aria-current=page]').textContent, 'Summary');
+  assert.equal(calls.includes('/api/operations'), false);
+  assert.match(document.querySelector('#page').textContent, /Operations Overview/);
+  assert.equal(document.querySelector('#page-title').textContent, 'Operations Overview');
+  assert.equal(document.querySelector('#page .workspace-heading h2').hidden, true);
+});

@@ -1,4 +1,5 @@
 import { api, escapeHtml as e, priorities } from './incidents.js';
+import { nextStepMarkup } from './workflow.js';
 
 export const reviewLabels = { pending: 'Pending review', outdated: 'Outdated', approve: 'Plan approved', approve_with_changes: 'Approved with changes', request_information: 'Awaiting information', reanalyze: 'Re-analysis requested', escalate: 'Referred to specialist', reject: 'Plan rejected' };
 const decisionLabels = { approve: 'Approve advisory plan', approve_with_changes: 'Approve with changes', request_information: 'Request information', reanalyze: 'Request re-analysis', escalate: 'Refer to specialist', reject: 'Reject plan' };
@@ -8,7 +9,14 @@ const selectOptions = values => Object.entries(values).map(([value, label]) => `
 export function reviewMarkup(data) {
   const { incident: i, report: r, package: p } = data;
   const previous = i.reviews?.find(review => review.reportId === r.id);
+  const next = p.stale ? { title: 'Review evidence is outdated', detail: 'The current case requires a fresh analysis before a new approval.', href: `/cases/${encodeURIComponent(i.id)}/triage`, action: 'Open analysis', blocked: true }
+    : ['approve', 'approve_with_changes'].includes(data.state) ? { title: 'Advisory plan reviewed', detail: 'Record what was actually done and verify the operational outcome. Approval alone is not resolution.', href: `/cases/${encodeURIComponent(i.id)}/handling`, action: 'Record handling and outcome' }
+    : data.state === 'request_information' ? { title: 'Information requested', detail: 'Update the case facts before resubmitting the analysis.', href: `/cases/${encodeURIComponent(i.id)}/edit`, action: 'Update case facts', blocked: true }
+    : data.state === 'reanalyze' ? { title: 'New analysis requested', detail: 'The recorded review requires a new analysis before another decision.', href: `/cases/${encodeURIComponent(i.id)}/triage`, action: 'Open analysis', blocked: true }
+    : ['reject', 'escalate'].includes(data.state) ? { title: data.state === 'reject' ? 'Plan rejected' : 'Referred to specialist', detail: 'The saved decision does not authorize the proposed plan. Follow the recorded rationale and capture specialist handling when available.', href: `/cases/${encodeURIComponent(i.id)}/handling`, action: 'Record follow-up', blocked: true }
+    : { title: p.canApprove ? 'Human decision required' : 'Approval blocked', detail: p.canApprove ? 'Check the recommendations and evidence below. No equipment operation is automatic.' : 'Review the blocking findings below; request information, re-analysis or specialist escalation as appropriate.', blocked: !p.canApprove };
   return `${back}<header class="workspace-heading"><div><p class="eyebrow">${e(i.id)}</p><h2>${e(i.title)}</h2></div><span class="badge">${e(reviewLabels[data.state])}</span></header>
+    ${nextStepMarkup(next)}
     <div class="detail-meta"><span>${e(i.asset || 'Unconfirmed asset')} / ${e(i.location)}</span><span>User priority: ${e(priorities[i.priority])}</span><a href="/incidents/${e(i.id)}">Case details</a><a href="/triage/${e(i.id)}">Full analysis and evidence</a></div>
     <section class="triage-section"><h3>Review essentials</h3><p>${e(r.summary || r.error)}</p><ul>${p.findings.filter(f => f.code !== 'uncertainty').map(f => `<li>${f.severity === 'block' ? '<strong>Approval blocked:</strong> ' : ''}${e(f.message)}</li>`).join('')}${[...new Set((r.hypotheses || []).flatMap(h => h.uncertainties || []))].map(v => `<li>${e(v)}</li>`).join('')}${(r.questions || []).map(q => `<li>${e(q.question)}</li>`).join('')}</ul><small>${e(r.pill?.name || 'No matching Pill')} / ${e(p.pillVersion)}</small></section>
     ${previous ? '<p class="triage-notice" role="status">This report has been reviewed. A new analysis is required for a new decision.</p>' : p.stale ? '<p class="triage-notice">Confirm the latest intake and run a new analysis before reviewing.</p>' : `<form id="review-form" class="triage-section"><h3>Review decision</h3>
@@ -30,7 +38,7 @@ export async function renderReview(root, pathname) {
     const id = pathname.match(/^\/review\/([^/]+)$/)?.[1];
     if (!id) {
       const { cases } = await api('/api/review'); if (!view.isConnected) return;
-      view.innerHTML = `<header class="workspace-heading"><h2>Review queue</h2></header><div class="list-toolbar"><label>Search<input id="review-search" type="search" placeholder="Case, asset or location"></label><label>Review status<select id="review-filter"><option value="">All reviews</option>${selectOptions(reviewLabels)}</select></label></div><p class="result-count" role="status"></p><div class="table-scroll"><table class="incident-table"><thead><tr><th>Case</th><th>Asset / Location</th><th>Priority</th><th>AI report</th><th>Review</th><th>Submitted</th></tr></thead><tbody></tbody></table></div>`;
+      view.innerHTML = `<header class="workspace-heading"><h2 class="case-page-title">Review queue</h2></header><div class="list-toolbar"><label>Search<input id="review-search" type="search" placeholder="Case, asset or location"></label><label>Review status<select id="review-filter"><option value="">All reviews</option>${selectOptions(reviewLabels)}</select></label></div><p class="result-count" role="status"></p><div class="table-scroll"><table class="incident-table"><thead><tr><th>Case</th><th>Asset / Location</th><th>Priority</th><th>AI report</th><th>Review</th><th>Submitted</th></tr></thead><tbody></tbody></table></div>`;
       const update = () => {
         const query = view.querySelector('input').value.toLowerCase(); const filter = view.querySelector('select').value;
         const rows = cases.filter(c => (!filter || c.state === filter) && [c.id, c.title, c.asset, c.location].join(' ').toLowerCase().includes(query));

@@ -1,3 +1,4 @@
+import { pillProgressMarkup } from './workflow.js';
 import { api, escapeHtml as e } from './incidents.js';
 import { pillMarkup } from './library.js';
 import { renderLearning } from './learning.js';
@@ -25,12 +26,12 @@ export function editorMarkup(record) {
   return `<a class="back-link" href="/studio">&larr; All Pills</a><header class="workspace-heading"><div><h2>${e(p.name)}</h2><p>${e(p.owner)}</p></div><span class="badge">${e(record.state.replaceAll('_', ' '))}</span></header>
   ${record.validation ? `<section class="triage-section"><h3>${record.validation.passed ? 'Structural validation passed' : 'Validation needs attention'}</h3><p>${e(record.validation.scope)}</p><ul>${record.validation.errors.map(error => `<li>${e(error)}</li>`).join('')}</ul></section>` : ''}
   <p id="studio-error" class="form-error" role="alert" hidden></p><p id="studio-status" role="status"></p>
-  ${published ? `${pillMarkup(record.releases.at(-1).pill)}<button type="button" class="primary" data-operation="fork">Create next draft</button>` : `<form id="pill-editor"><section class="triage-section"><h3>Capability</h3><p class="muted-label">Advisory use / human supervision</p><div class="studio-fields">${[['name', 'Pill name'], ['owner', 'Knowledge owner'], ['source', 'Knowledge provenance'], ['scope', 'Applicable assets, conditions and exclusions']].map(([key, label]) => field(key, label, p[key], key === 'scope' || key === 'source' ? 'text' : '')).join('')}</div></section>
+  ${published ? `${pillMarkup(record.releases.at(-1).pill)}<button type="button" class="primary" data-operation="fork">Create next draft</button>` : `<form id="pill-editor" data-page-panel="draft"><section class="triage-section"><h3>Capability</h3><p class="muted-label">Advisory use / human supervision</p><div class="studio-fields">${[['name', 'Pill name'], ['owner', 'Knowledge owner'], ['source', 'Knowledge provenance'], ['scope', 'Applicable assets, conditions and exclusions']].map(([key, label]) => field(key, label, p[key], key === 'scope' || key === 'source' ? 'text' : '')).join('')}</div></section>
   ${Object.keys(layouts).map(kind => `<section class="triage-section"><h3>${names[kind]}</h3><div data-rows="${kind}">${(c[kind] || p[kind] || []).map(item => row(kind, item)).join('')}</div><button type="button" data-add="${kind}">Add ${kind === 'sources' ? 'source' : kind === 'rules' ? 'rule' : kind === 'actions' ? 'action' : 'example'}</button></section>`).join('')}
   <section class="triage-section"><h3>Boundaries and escalation</h3>${field('boundaries', 'Boundaries (one per line)', p.boundaries.join('\n'), 'text')}${field('escalationConditions', 'Escalation conditions (one per line)', p.escalationConditions.join('\n'), 'text')}</section><div class="actions"><button type="submit" class="primary">Save draft</button><button type="button" data-operation="validate">Validate saved draft</button>${record.state === 'validated' ? '<button type="button" data-operation="submit">Submit for expert review</button>' : ''}</div></form>`}
-  ${record.state === 'in_review' ? `<form id="pill-approval" class="triage-section"><h3>Expert review</h3>${field('reviewer', 'Reviewer name (signed-in)', '')}${field('notes', 'Review rationale', '', 'text')}<label class="studio-check"><input type="checkbox" name="expertConfirmed">I reviewed the sources, decision rules, boundaries and example cases for this version.</label><p>Publishing activates this version of the Pill for matching cases. Equipment execution remains disabled.</p><div class="actions"><button class="primary" type="submit" value="publish">Approve and publish</button><button type="submit" value="return">Return for changes</button></div></form>` : ''}
-  <details class="triage-section"><summary>Published versions (${record.releases.length})</summary>${[...record.releases].reverse().map(release => `<article class="studio-version"><h3>${e(release.pill.version)} ${release.active ? '/ Active' : ''}</h3><p>${e(release.publishedAt)} / ${e(release.reviewer)}</p><p>${e(release.notes)}</p><details><summary>Version content and sources</summary>${pillMarkup(release.pill)}${release.sources.map(s => `<p><strong>${e(s.expert)}</strong> / ${e(s.reference)}</p><p>${e(s.knowledge)}</p>`).join('')}</details></article>`).join('') || '<p>No published versions.</p>'}</details>
-  <details class="triage-section"><summary>Change history</summary>${[...record.events].reverse().map(event => `<p>${e(event.at)} / ${e(event.action)} ${e(event.reviewer || '')}${event.notes ? `<br>${e(event.notes)}` : ''}</p>`).join('') || '<p>No changes yet.</p>'}</details>`;
+  ${record.state === 'in_review' ? `<form id="pill-approval" class="triage-section" data-page-panel="publication"><h3>Expert review</h3>${field('reviewer', 'Reviewer name (signed-in)', '')}${field('notes', 'Review rationale', '', 'text')}<label class="studio-check"><input type="checkbox" name="expertConfirmed">I reviewed the sources, decision rules, boundaries and example cases for this version.</label><p>Publishing activates this version of the Pill for matching cases. Equipment execution remains disabled.</p><div class="actions"><button class="primary" type="submit" value="publish">Approve and publish</button><button type="submit" value="return">Return for changes</button></div></form>` : ''}
+  <details class="triage-section" data-page-panel="history"><summary>Published versions (${record.releases.length})</summary>${[...record.releases].reverse().map(release => `<article class="studio-version"><h3>${e(release.pill.version)} ${release.active ? '/ Active' : ''}</h3><p>${e(release.publishedAt)} / ${e(release.reviewer)}</p><p>${e(release.notes)}</p><details><summary>Version content and sources</summary>${pillMarkup(release.pill)}${release.sources.map(s => `<p><strong>${e(s.expert)}</strong> / ${e(s.reference)}</p><p>${e(s.knowledge)}</p>`).join('')}</details></article>`).join('') || '<p>No published versions.</p>'}</details>
+  <details class="triage-section" data-page-panel="history"><summary>Change history</summary>${[...record.events].reverse().map(event => `<p>${e(event.at)} / ${e(event.action)} ${e(event.reviewer || '')}${event.notes ? `<br>${e(event.notes)}` : ''}</p>`).join('') || '<p>No changes yet.</p>'}</details>`;
 }
 
 function readContent(form) {
@@ -111,14 +112,14 @@ export async function renderStudio(root, path, navigate) {
   const view = document.createElement('section'); root.replaceChildren(view);
   view.innerHTML = '<p role="status">Loading Pill Studio...</p>';
   try {
-    if (path === '/studio/new/upload' || path === '/studio/new/expert') { await renderCaptureEntry(view, path.endsWith('/upload') ? 'upload' : 'expert', navigate); return; }
+    if (['/studio/new', '/studio/new/upload', '/studio/new/expert'].includes(path)) { await renderCaptureEntry(view, 'unified', navigate); return; }
     if (path === '/studio/improvements') {
-      view.innerHTML = '<header class="workspace-heading"><h2>Pill Studio</h2><a href="/studio">Knowledge and drafts</a></header><div class="studio-candidates"></div>';
+      view.innerHTML = '<header class="workspace-heading"><h2>Pill Studio</h2></header><div class="studio-candidates"></div>';
       await renderLearning(view.querySelector('.studio-candidates')); return;
     }
     if (path === '/studio') {
       const { records } = await api('/api/studio'); if (!view.isConnected) return;
-      view.innerHTML = `<header class="workspace-heading"><h2>Pill Studio</h2><a href="/studio/improvements">Improvement queue</a></header><div class="studio-entry-actions"><a class="button primary" href="/studio/new/upload">Upload documents</a><a class="button" href="/studio/new/expert">Capture expert experience</a></div><div class="table-scroll"><table class="incident-table"><thead><tr><th>Pill</th><th>Owner</th><th>Draft status</th><th>Latest release</th></tr></thead><tbody>${records.map(r => `<tr><td><a href="/studio/${e(r.id)}">${e(r.content.pill.name)}</a></td><td>${e(r.content.pill.owner)}</td><td>${e(r.state.replaceAll('_', ' '))}</td><td>${e(r.releases.at(-1)?.pill.version || 'Unpublished')}</td></tr>`).join('')}</tbody></table></div>`;
+      view.innerHTML = `<header class="workspace-heading"><h2>Pill Studio</h2></header><div class="table-scroll"><table class="incident-table"><thead><tr><th>Pill</th><th>Owner</th><th>Draft status</th><th>Latest release</th></tr></thead><tbody>${records.map(r => `<tr><td><a href="/studio/${e(r.id)}">${e(r.content.pill.name)}</a></td><td>${e(r.content.pill.owner)}</td><td>${e(r.state.replaceAll('_', ' '))}</td><td>${e(r.releases.at(-1)?.pill.version || 'Unpublished')}</td></tr>`).join('')}</tbody></table></div>`;
       return;
     }
     const match = path.match(/^\/studio\/([^/]+)$/); if (!match) throw new Error('Pill page not found.');
@@ -129,12 +130,17 @@ export async function renderStudio(root, path, navigate) {
     function paint() {
       if (!view.isConnected) return;
       view.innerHTML = editorMarkup(record); dirty = false;
-      view.querySelector('#studio-status').insertAdjacentHTML('afterend', evaluationMarkup(record));
+      view.querySelector('.workspace-heading').insertAdjacentHTML('afterend', pillProgressMarkup(record));
+      view.querySelector(':scope > .pill-record')?.setAttribute('data-page-panel', 'draft');
+      view.querySelector('[data-operation="fork"]')?.setAttribute('data-page-panel', 'draft');
+      view.querySelector(':scope > .triage-section:not(form):not(details)')?.setAttribute('data-page-panel', 'publication');
+      view.querySelector('#studio-status').insertAdjacentHTML('afterend', `<section data-page-panel="publication" class="triage-section"><h3>Publication status</h3><p>${e(record.state.replaceAll('_', ' '))}</p><a href="/studio/${e(record.id)}?view=draft">Draft content</a></section>`);
+      view.querySelector('#studio-status').insertAdjacentHTML('afterend', `<div data-page-panel="evaluation">${evaluationMarkup(record)}</div>`);
       bindEvaluation(view, record, operate, () => performCapture(async () => (await api(`/api/studio/${record.id}`)).record, 'Refreshing evaluation...'));
-      view.querySelector('#studio-status').insertAdjacentHTML('afterend', captureMarkup(record));
+      view.querySelector('#studio-status').insertAdjacentHTML('afterend', `<div data-page-panel="sources">${captureMarkup(record)}</div>`);
       bindCapture(view, record, performCapture);
       if (record.learningImports?.length) {
-        const section = document.createElement('section'); section.className = 'triage-section';
+        const section = document.createElement('section'); section.className = 'triage-section'; section.dataset.pagePanel = 'sources';
         section.innerHTML = `<h3>Imported learning</h3>${record.learningImports.map(item => `<article class="studio-version"><a href="/cases/${e(item.caseId)}/handling">${e(item.caseId)}</a><h4>${e(item.proposal.title)}</h4><p>${e(item.proposal.decision.reviewedAfter)}</p><p>Applicability: ${e(item.proposal.applicability)}</p><p>Limitations: ${e(item.proposal.limitations)}</p><ul>${item.proposal.validationCases.map(v => `<li>${e(v)}</li>`).join('')}</ul><span class="badge">${e(item.releasedVersion || item.status.replaceAll('_', ' '))}</span>${item.status === 'pending_incorporation' ? `<form data-incorporate="${e(item.proposalId)}"><label>Expert name<input name="reviewer" maxlength="120" required></label><label>Changed rule IDs, validation cases and rationale<textarea name="notes" maxlength="3000" required></textarea></label><label class="studio-check"><input name="expertConfirmed" type="checkbox" required>I incorporated the reviewed change into the saved rules and validation cases.</label><button type="submit">Confirm incorporation</button></form>` : ''}</article>`).join('')}`;
         view.querySelector('#studio-status').after(section);
         section.querySelectorAll('[data-incorporate]').forEach(form => form.onsubmit = event => { event.preventDefault(); operate('incorporate-learning', { proposalId: form.dataset.incorporate, ...Object.fromEntries(new FormData(form)), expertConfirmed: form.elements.expertConfirmed.checked }); });
@@ -147,7 +153,7 @@ export async function renderStudio(root, path, navigate) {
       }
       if (form) addReferenceHelpers(form);
       if (candidates.length) {
-        const section = document.createElement('details'); section.className = 'triage-section';
+        const section = document.createElement('details'); section.className = 'triage-section'; section.dataset.pagePanel = 'sources';
         section.innerHTML = `<summary>Related improvement candidates (${candidates.length})</summary>${candidates.map((c, index) => `<article class="studio-version"><a href="/cases/${e(c.incidentId)}/review">${e(c.incidentId)}</a><p>${e(c.notes)}</p>${c.proposals ? `<p>${e(c.proposals)}</p>` : ''}${form ? `<button type="button" data-source="${index}">Add to expert sources</button>` : ''}</article>`).join('')}`;
         view.append(section);
       }

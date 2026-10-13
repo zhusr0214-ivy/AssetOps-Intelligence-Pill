@@ -19,6 +19,17 @@ change provider credentials.
 
 ## Users and Roles
 
+### Forgotten Password (Local Recovery)
+
+Stop all application instances, then run `npm run admin -- reset-password <username>`
+from the project directory. Enter and confirm a new 12-128-character password at
+the hidden terminal prompts; never pass it as a command argument or chat message.
+This local recovery command requires filesystem access, works with JSON or SQLite,
+and preserves the account ID, roles, disabled state and business data. Existing
+sessions are revoked. An unknown username or invalid password changes no account.
+For unattended recovery, use `ASSETOPS_ADMIN_PASSWORD` through a secret mechanism,
+not a committed file or shell-history literal. There is no public password-reset API.
+
 `/settings` provides sign-out and password changes for all users. Administrators
 can add users, edit names/roles, disable accounts, or reset passwords. Any account
 change revokes that user's active sessions; changing your own password requires a

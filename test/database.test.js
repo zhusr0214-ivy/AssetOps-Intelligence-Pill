@@ -126,9 +126,35 @@ test('offline CLI migrates, backs up and restores in an isolated project copy', 
   await symlink(join(source, 'node_modules'), join(root, 'node_modules'), 'dir');
   await mkdir(join(root, 'data'));
   await writeFile(join(root, 'data', 'incidents.json'), JSON.stringify([{ id: 'cli-case', title: 'Original', revision: 0 }]));
-  const env = { ...process.env }; for (const key of ['DATA_FILE', 'PILL_DATA_FILE', 'STORAGE_DRIVER', 'SOCLAAS_API_KEY']) delete env[key];
+  const env = { ...process.env, ASSETOPS_ADMIN_PASSWORD: 'original-test-password' }; for (const key of ['DATA_FILE', 'PILL_DATA_FILE', 'STORAGE_DRIVER', 'SOCLAAS_API_KEY']) delete env[key];
   const cli = (...args) => promisify(execFile)(process.execPath, ['scripts/admin.js', ...args], { cwd: root, env });
+  await cli('bootstrap', 'recovery-admin', 'Recovery Admin');
+  const originalUser = (await createAuth(join(root, 'data', 'users.json')).list())[0];
+  env.ASSETOPS_ADMIN_PASSWORD = 'new-json-test-password';
+  await assert.rejects(cli('reset-password', 'unknown-user'), /Username not found/);
+  await assert.rejects(cli('reset-password', 'recovery-admin', 'not-a-password-argument'), /Never pass a password/);
+  await cli('reset-password', 'recovery-admin');
+  const jsonAuth = createAuth(join(root, 'data', 'users.json'));
+  assert.deepEqual((await jsonAuth.list())[0], originalUser);
+  await assert.rejects(jsonAuth.login('recovery-admin', 'original-test-password'), { status: 401 });
+  await jsonAuth.login('recovery-admin', env.ASSETOPS_ADMIN_PASSWORD);
   await cli('migrate-sqlite');
+  const recoveryDb = openDatabase(join(root, 'data', 'assetops.sqlite'));
+  try {
+    const auth = createAuth('unused', { persistence: recoveryDb });
+    const session = await auth.login('recovery-admin', env.ASSETOPS_ADMIN_PASSWORD);
+    env.ASSETOPS_ADMIN_PASSWORD = '';
+    await assert.rejects(cli('reset-password', 'recovery-admin'), /12 to 128/);
+    env.ASSETOPS_ADMIN_PASSWORD = 'new-sqlite-test-password';
+    const release = await registerInstance(root, 'sqlite');
+    try { await assert.rejects(cli('reset-password', 'recovery-admin'), /Stop all/); } finally { await release(); }
+    const reset = await cli('reset-password', 'recovery-admin');
+    assert.ok(!reset.stdout.includes(env.ASSETOPS_ADMIN_PASSWORD));
+    assert.equal(await auth.session({ headers: { cookie: `assetops_session=${session.id}` } }), null);
+    await assert.rejects(auth.login('recovery-admin', 'new-json-test-password'), { status: 401 });
+    await auth.login('recovery-admin', env.ASSETOPS_ADMIN_PASSWORD);
+    assert.deepEqual((await auth.list())[0], originalUser);
+  } finally { recoveryDb.close(); }
   const { stdout } = await cli('backup'), result = JSON.parse(stdout);
   const db = openDatabase(join(root, 'data', 'assetops.sqlite'));
   await db.mutate('incidents', () => [], records => { records[0].title = 'Later'; }); db.sessions.set('active', { userId: 'u' }); db.close();

@@ -2,6 +2,7 @@ export function canonicalPath(path) {
   const clean = path.length > 1 ? path.replace(/\/$/, '') : path;
   if (clean === '/' || clean === '/dashboard') return '/overview';
   if (clean === '/governance') return '/studio';
+  if (clean === '/studio/new/upload' || clean === '/studio/new/expert') return '/studio/new';
   if (clean === '/learning') return '/studio/improvements';
   if (clean === '/incidents') return '/cases';
   if (clean.startsWith('/incidents/')) return clean.replace('/incidents/', '/cases/');
