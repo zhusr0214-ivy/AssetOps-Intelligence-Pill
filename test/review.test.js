@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { createIncidentStore } from '../incident-store.js';
-import { createTriageService } from '../triage.js';
+import { createTriageService, ahuPill } from '../triage.js';
 import { createReviewService, governancePackage } from '../review.js';
 import { createHandler } from '../server.js';
 import { reviewMarkup } from '../public/review.js';
@@ -29,7 +29,7 @@ async function request(handler, method, url, data) {
 }
 
 test('review API persists advisory approval, governance snapshot and learning candidate', async t => {
-  const { store, file, id, payload } = await setup(t); const handler = createHandler(store);
+  const { store, file, id, payload } = await setup(t); const handler = createHandler(store,undefined,undefined,{runtimePills:async()=>[ahuPill],list:async()=>[]});
   assert.equal((await request(handler, 'GET', '/api/review')).cases.length, 1);
   const response = await request(handler, 'POST', `/api/review/${id}`, payload);
   assert.equal(response.status, 201); assert.equal(response.review.executionAllowed, false);

@@ -2,13 +2,15 @@ import { escapeHtml as e } from './incidents.js';
 import { canonicalPath } from './routes.js';
 
 export function workspaceLinks(path, admin = false) {
+  path=canonicalPath(path);
+  if (path.startsWith('/overview')) return [['/overview', 'Summary'], ['/overview/analytics', 'Operational analytics']];
   if (path === '/settings') return [];
   if (path.startsWith('/cases')) {
     return [];
   }
   if (path.startsWith('/studio')) {
-    const links = [['/studio', 'Knowledge & drafts'], ['/studio/new', 'Create Pill'], ['/studio/improvements', 'Improvement queue'], ['/studio/analytics', 'Operational analytics']];
-    if (/^\/studio\/[^/]+$/.test(path) && !['/studio/improvements', '/studio/new', '/studio/analytics'].includes(path)) links.push(...[['draft', 'Draft content'], ['sources', 'Sources & learning'], ['evaluation', 'Model evaluation'], ['publication', 'Review & publish'], ['history', 'Change history']].map(([key, label]) => [`${path}?view=${key}`, label]));
+    const links = [['/studio', 'Knowledge & drafts'], ['/studio/improvements', 'Improvement queue'], ['/studio/analytics', 'Operational analytics']];
+    if (/^\/studio\/[^/]+$/.test(path) && !['/studio/improvements', '/studio/new', '/studio/analytics'].includes(path)) links.push(...[['draft', '1 · Prepare knowledge'], ['evaluation', '2 · Validate recommendations'], ['publication', '3 · Review & release']].map(([key, label]) => [`${path}?view=${key}`, label]));
     return links;
   }
   if (path.startsWith('/library')) {
@@ -30,12 +32,17 @@ export function navigationMarkup(modules, path) {
 }
 
 export function pageTabsMarkup(path, search = '', admin = false) {
+  path=canonicalPath(path);
+  if (['/studio/new','/studio/new/upload','/studio/new/expert'].includes(path)) {
+    return '<nav class="workspace-tabs pill-step-tabs" data-page-tabs aria-label="Pill creation steps"><a href="/studio/new" aria-current="step">1 · Prepare knowledge</a><span aria-disabled="true">2 · Validate recommendations</span><span aria-disabled="true">3 · Review &amp; release</span></nav>';
+  }
   let links = workspaceLinks(path, admin);
   if (/^\/studio\/[^/]+$/.test(path) && !['/studio/improvements', '/studio/new', '/studio/analytics'].includes(path)) links = links.filter(([href]) => href.includes('?view='));
   if (path.startsWith('/library/')) links = links.filter(([href]) => href !== '/library');
   const fallback = path.startsWith('/studio') ? 'draft' : path.startsWith('/library') ? 'content' : 'account';
   const value = new URLSearchParams(search).get('view');
-  const requested = path === '/settings' && (!admin || value !== 'users') ? 'account' : value || fallback;
+  const rawView = path === '/settings' && (!admin || value !== 'users') ? 'account' : value || fallback;
+  const requested = path.startsWith('/studio/') && rawView === 'sources' ? 'draft' : rawView;
   const current = path.startsWith('/cases/') ? path.replace(/\/(edit|triage)$/, '').replace(/\/tasks$/, '/handling') : path;
   if (!links.length) return '';
   return `<nav class="workspace-tabs" data-page-tabs aria-label="Workspace views">${links.map(([href, label]) => {

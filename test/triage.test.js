@@ -34,7 +34,7 @@ test('triage API persists a grounded report and retains user priority', async t 
     assert.equal(snapshot.fields.priority, 'high');
     assert.equal(pill.version, '0.1.1-demo');
     return proposal();
-  });
+  }, {runtimePills:async()=>[ahuPill]});
   assert.equal((await request(handler, 'GET', '/api/triage')).cases.length, 1);
   const result = await request(handler, 'POST', `/api/triage/${incident.id}/runs`, { revision: 0 });
   assert.equal(result.status, 200);

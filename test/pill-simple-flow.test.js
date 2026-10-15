@@ -1,0 +1,26 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtemp,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {createPillStudio} from '../pill-studio.js';
+import {ahuPill} from '../triage.js';
+const author={id:'author',name:'Author'},reviewer={id:'reviewer',name:'Reviewer'};
+const suite=[{name:'Supported',facts:{category:'hvac_cooling',asset:'AHU-1',description:'Room warm.',observations:'Room temperature 29 C'},expected:{status:'complete',ruleIds:['HVAC-01'],actionIds:['check-readings'],missingFields:[]}},{name:'Outside',facts:{category:'lift_fault',asset:'LIFT-1',observations:'Unresponsive'},expected:{status:'out_of_scope',ruleIds:[],actionIds:[],missingFields:[]}}];
+for(const independent of [false,true])test(`expert publication supports ${independent?'independent review':'author confirmation'} with frozen evidence`,async t=>{
+ const directory=await mkdtemp(join(tmpdir(),'pill-simple-'));t.after(()=>rm(directory,{recursive:true,force:true}));
+ const studio=createPillStudio(join(directory,'pills.json'),{evaluationAgent:async()=>({summary:'Check readings.',hypotheses:[{ruleId:'HVAC-01',reasoning:'Review.',evidence:[{field:'observations',quote:'Room temperature 29 C'}],uncertainties:[]}],actionIds:['check-readings'],missingFields:[],prioritySuggestion:null})});
+ const created=await studio.create({name:'Lift',owner:'QA',domain:'lift_fault'});assert.equal(created.content.pill.domain,'lift_fault');assert.deepEqual(created.content.pill.applicability.categories,['lift_fault']);
+ await assert.rejects(studio.create({name:'Bad',owner:'QA',domain:'unsupported'}));
+ let r=await studio.get(ahuPill.id);r.content.sources=[{expert:'QA',reference:'fixture',knowledge:'Compare readings.'}];
+ const change=async(operation,input={})=>r=await studio.change(r.id,operation,{revision:r.revision,authenticatedActor:author,...input});
+ await change('save',{content:r.content,autoValidate:true});assert.equal(r.validation.passed,false);
+ await change('save-evaluations',{suite,sharedExamples:true,autoValidate:true,options:{expertReviewRequired:true,independentReviewRequired:independent}});assert.equal(r.content.examples.length,1);assert.equal(r.validation.passed,true);
+ r=await studio.evaluate(r.id,{revision:r.revision,authenticatedActor:author});await change('submit',{autoValidate:true});
+ const evalReview={runId:r.evaluations.at(-1).id,scope:'Synthetic scope',limitations:'No equipment operation',qualification:'QA tester',reference:'Test fixtures',notes:'Reviewed trials',confirmed:true};
+ if(independent)await assert.rejects(change('publish',{reviewer:'Author',notes:'Approve',expertConfirmed:true,evaluationReview:evalReview}),{status:403});
+ await assert.rejects(change('publish',{authenticatedActor:reviewer,reviewer:'Reviewer',notes:'Approve',expertConfirmed:true,evaluationReview:{...evalReview,qualification:''}}),{status:422});
+ assert.equal((await studio.get(r.id)).evaluations.at(-1).expertReview,undefined);
+ await change('publish',{authenticatedActor:independent?reviewer:author,reviewer:independent?'Reviewer':'Author',notes:'QA approval',expertConfirmed:true,evaluationReview:evalReview});
+ assert.equal(r.state,'published');assert.equal(r.releases.at(-1).independentReviewRequired,independent);assert.equal(r.releases.at(-1).evaluation.expertReview.actorId,independent?reviewer.id:author.id);assert.equal(r.releases.at(-1).evaluation.expertReview.certification,false);
+});

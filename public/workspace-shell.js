@@ -7,6 +7,8 @@ export function syncWorkspaceHeader(root, path, user) {
   if (!title) return;
   const newCase = doc.querySelector('[data-new-case]');
   if (newCase) newCase.hidden = !user || !(path === '/cases' || path.startsWith('/cases/')) || path === '/cases/new';
+  const newPill = doc.querySelector('[data-new-pill]');
+  if (newPill) newPill.hidden = path !== '/studio' || !user?.roles?.some(role => ['admin', 'expert'].includes(role));
   const heading = root.querySelector('.workspace-heading');
   const source = heading?.querySelector('h2');
   const text = source?.textContent || (['/overview/analytics', '/studio/analytics'].includes(path) ? 'Operational analytics' : titles[path.split('/')[1]]) || 'Workspace';

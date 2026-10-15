@@ -22,3 +22,11 @@ test('already verbatim evidence does not trigger a second model call', async () 
   await agent(snapshot, ahuPill);
   assert.equal(calls, 1);
 });
+
+ test('a quote in another field does not bypass corrective evidence checking',async()=>{
+  const snapshot={fields:{description:'The fan is running.',observations:'Airflow is unknown.'}};
+  const make=field=>({summary:'Review airflow.',hypotheses:[{ruleId:'HVAC-02',reasoning:'Review.',evidence:[{field,quote:'The fan is running.'}],uncertainties:['Airflow is reported unknown.']}],actionIds:[],missingFields:[],prioritySuggestion:null});
+  let calls=0;
+  const agent=createTriageAgent({env:{SOCLAAS_API_KEY:'fixture',SOCLAAS_BASE_URL:'https://fixture.invalid/v1'},fetchImpl:async()=>({ok:true,json:async()=>({choices:[{message:{content:JSON.stringify(make(calls++===0?'observations':'description'))}}]})})});
+  const result=await agent(snapshot,ahuPill);assert.equal(calls,2);assert.equal(validateTriageResult(result,snapshot,ahuPill).hypotheses[0].evidence[0].field,'description');
+ });

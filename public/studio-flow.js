@@ -3,27 +3,31 @@ import { escapeHtml as e } from './incidents.js';
 export function studioStep(record) {
   if (record.state === 'published') return 3;
   if (record.state === 'in_review') return 3;
+  if(record.documents?.some(d=>['extracted','analyzing','failed','ready'].includes(d.status)))return 0;
   const p = record.content.pill;
   if (!p.applicability?.categories?.length) return 1;
   if (!p.rules?.length && record.documents?.some(d => ['ready','failed','analyzing','extracted'].includes(d.status))) return 0;
-  if (!p.rules?.length || !p.actions?.length || !record.validation?.passed) return 1;
+  if (!p.rules?.length || !p.actions?.length) return 1;
+  if (!record.validation?.passed || !record.evaluationRequired) return 2;
   if (record.evaluationRequired && !record.evaluationGate?.passed) return 2;
-  return 1;
+  return 2;
 }
 
 export function bindStudioFlow(view, record, {subpages = false} = {}) {
   const current = studioStep(record);
   const titles = ['1 · Source & knowledge review', '2 · Draft & structural validation', '3 · Model evaluation', '4 · Approval & published versions'];
   const instructions = [
-    record.documents?.some(d=>d.status==='extracted') ? 'Extraction is complete. Review the candidate evidence, select the items to keep, then click Save decisions and merge selected.' : 'Click Analyze on the source below. After extraction, review and select the knowledge to merge into the draft.',
-    !record.content.pill.applicability?.categories?.length ? 'First choose the domain and incident categories, then save. Next, analyze your source.' : record.validation?.passed ? 'The draft structure is valid. Configure model evaluation, or submit the validated draft for expert review when ready.' : 'Complete the draft rules, linked actions, sources and examples. Save, then validate the structure.',
-    record.evaluationGate?.state === 'expert_review_required' ? 'Trials passed. A separate reviewer must review the results and record a decision.' : 'Save 2–8 cases including a supported case and a negative case, then run evaluation. Review failures before proceeding.',
-    record.state === 'published' ? 'This version is published. Return to your Case and run a new analysis to use it.' : 'A separate reviewer must review this version and approve publication or return it for changes.'
+    record.documents?.some(d=>d.status==='extracted') ? 'Extraction is complete. Review the candidate evidence, select the items to keep, then click Save & continue to Test.' : 'Click Analyze on the source below. After extraction, review and select the knowledge to merge into the draft.',
+    !record.content.pill.applicability?.categories?.length ? 'First choose the domain and incident categories, then save. Next, analyze your source.' : record.validation?.passed ? 'The draft structure is valid. Configure model evaluation, or submit the validated draft for expert review when ready.' : 'Review the extracted knowledge and complete rules, actions and boundaries. Changes save automatically; test cases in step 2 also supply validation examples.',
+    record.evaluations?.at(-1)?.passed === false ? 'The latest evaluation failed. Open Test to review the expected and actual results for each trial. Publication is blocked.' : record.evaluationGate?.state === 'expert_review_required' ? (record.independentReviewRequired?'Trials passed. Continue to independent review.':'Trials passed. Continue to expert confirmation and publication.') : 'Give an example you know, review the analysis, and confirm or correct its handling. Your feedback supplies the saved regression examples. Run their comparison when ready, then continue to expert review. You do not need to cover every scenario.',
+    record.state === 'published' ? 'This version is published. Return to your Case and run a new analysis to use it.' : (record.independentReviewRequired?'A different expert must review this version before publication.':'Confirm the knowledge, test results and operating limits before publication.')
   ];
   if (subpages) {
-    const keys=['sources','draft','evaluation','publication'];
+    const keys=['draft','draft','evaluation','publication'];
+    const phase=current<2?0:current===2?1:2;
     const next=document.createElement('aside');next.className='studio-next-step';
-    next.innerHTML=`<div><span class="studio-eyebrow">NEXT STEP · ${current+1} / 4</span><h3>${e(titles[current].replace(/^\d · /,''))}</h3><p>${e(instructions[current])}</p></div><a class="button primary" href="/studio/${encodeURIComponent(record.id)}?view=${keys[current]}">Go to current step</a>`;
+    const headings=['Prepare knowledge','Prepare knowledge','Validate recommendations','Review & release'];
+    next.innerHTML=`<div><span class="studio-eyebrow">${record.state === 'published' ? 'PUBLISHED' : `CURRENT TASK · ${phase+1} / 3`}</span><h3>${e(headings[current])}</h3><p>${e(instructions[current])}</p></div>`;
     const header=view.querySelector('.workspace-heading');header?.after(next);
     // Keep teammate's URL-addressable panels mounted; compact only long candidate evidence.
     compactCandidates(view);
@@ -64,12 +68,12 @@ function compactCandidates(view) {
   view.querySelectorAll('.capture-candidate').forEach(card=>{
     const heading=card.querySelector('label.studio-check'); if(!heading)return;
     const body=document.createElement('details'); body.className='candidate-evidence';
-    body.innerHTML='<summary>View proposed knowledge & source evidence</summary>';
-    [...card.children].filter(n=>n!==heading && !n.matches('.badge, ul')).forEach(n=>body.append(n)); card.append(body);
+    body.innerHTML='<summary>View source evidence & references</summary>';
+    [...card.children].filter(n=>n!==heading && !n.matches('.candidate-heading, .badge, ul, label')).forEach(n=>body.append(n)); card.append(body);
   });
   view.querySelectorAll('[data-capture-review]').forEach(form=>{
     const count=document.createElement('p');count.className='capture-selection-status';count.setAttribute('role','status');form.querySelector('h4')?.after(count);
-    const update=()=>count.textContent=`${form.querySelectorAll('input[name^="accept-"]:checked').length} selected / ${form.querySelectorAll('input[name^="accept-"]').length} candidates. Review evidence before merging.`;
+    const update=()=>count.textContent=`${form.querySelectorAll('input[name^="accept-"]:checked').length} / ${form.querySelectorAll('input[name^="accept-"]').length} selected.`;
     form.addEventListener('change',update);update();
   });
   view.querySelectorAll('[data-operation="validate"], [data-operation="submit"]').forEach(b=>b.classList.add('primary'));

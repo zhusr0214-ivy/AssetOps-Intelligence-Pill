@@ -4,7 +4,7 @@ import {JSDOM} from 'jsdom';
 import {studioStep,bindStudioFlow} from '../public/studio-flow.js';
 test('next step follows draft, evaluation and publication state',()=>{
  const r={state:'draft',content:{pill:{applicability:{categories:['lift_fault']},rules:[],actions:[]}},documents:[{status:'extracted'}]};
- assert.equal(studioStep(r),0);r.content.pill.rules=[{}];r.content.pill.actions=[{}];assert.equal(studioStep(r),1);
+ assert.equal(studioStep(r),0);r.content.pill.rules=[{}];r.content.pill.actions=[{}];assert.equal(studioStep(r),0);r.documents[0].status='reviewed';assert.equal(studioStep(r),2);
  r.validation={passed:true};r.evaluationRequired=true;r.evaluationGate={passed:false};assert.equal(studioStep(r),2);
  r.state='in_review';assert.equal(studioStep(r),3);
 });

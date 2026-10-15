@@ -46,7 +46,7 @@ test('expert review is independent, scoped, immutable and captured in publicatio
   r.content.sources = [{ expert: 'Expert', reference: 'Source', knowledge: 'Compare readings.' }];
   r.content.examples = [{ scenario: 'Warm room', rationale: 'Check readings', ruleIds: ['HVAC-01'], actionIds: ['check-readings'] }];
   const change = async (operation, input = {}) => { r = await studio.change(r.id, operation, { revision: r.revision, authenticatedActor: author, ...input }); return r; };
-  await change('save', { content: r.content }); await change('save-evaluations', { suite: suite(), options: record().evaluationOptions });
+  await change('save', { content: r.content }); await change('save-evaluations', { suite: suite(), options: {...record().evaluationOptions,independentReviewRequired:true} });
   r = await studio.evaluate(r.id, { revision: r.revision, authenticatedActor: author });
   const input = () => ({ revision: r.revision, runId: r.evaluations.at(-1).id, authenticatedActor: reviewer, decision: 'accepted', confirmed: true, scope: 'AHU-1 warm room', limitations: 'No plant control authority', qualification: 'Building operations experience', reference: 'Expert review fixture', notes: 'Reviewed every trial and source' });
   await assert.rejects(studio.reviewEvaluation(r.id, { ...input(), authenticatedActor: author }), { status: 403 });
@@ -57,7 +57,7 @@ test('expert review is independent, scoped, immutable and captured in publicatio
   await change('validate'); await change('submit');
   const published = await change('publish', { authenticatedActor: reviewer, reviewer: reviewer.name, notes: 'Scoped approval', expertConfirmed: true });
   assert.equal(published.releases.at(-1).evaluation.expertReview.actorId, reviewer.id);
-  assert.equal(permitted({ roles: ['expert'] }, `/api/studio/${r.id}/review-evaluation`, 'POST'), false);
+  assert.equal(permitted({ roles: ['expert'] }, `/api/studio/${r.id}/review-evaluation`, 'POST'), true);
   assert.equal(permitted({ roles: ['reviewer'] }, `/api/studio/${r.id}/review-evaluation`, 'POST'), true);
 });
 test('UI saves repeat policy with suite and labels evidence limitations', t => {
@@ -65,7 +65,8 @@ test('UI saves repeat policy with suite and labels evidence limitations', t => {
   const root = dom.window.document.querySelector('main'); let sent;
   bindEvaluation(root, r, (operation, body) => { sent = { operation, body }; }, () => {});
   const repeats = root.querySelector('[name=repetitions]'); repeats.value = '5'; repeats.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
-  root.querySelector('[data-run-evaluation]').click(); assert.equal(sent, undefined);
+  root.querySelectorAll('[name=workflow-steps]').forEach(el=>el.value='Record symptoms and refer within the supplied knowledge scope.');
+  root.querySelector('[data-run-evaluation]').click(); assert.equal(sent.operation,'save-evaluations');assert.equal(sent.body.sharedExamples,true);
   root.querySelector('#evaluation-suite').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
   assert.equal(sent.body.options.repetitions, 5); assert.equal(sent.body.options.expertReviewRequired, true);
 });

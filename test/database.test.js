@@ -124,6 +124,8 @@ test('offline CLI migrates, backs up and restores in an isolated project copy', 
   for (const name of await readdir(source)) if (name.endsWith('.js') || name === 'package.json') await copyFile(join(source, name), join(root, name));
   await cp(join(source, 'scripts'), join(root, 'scripts'), { recursive: true });
   await cp(join(source, 'pills'), join(root, 'pills'), { recursive: true });
+  await mkdir(join(root, 'public'), {recursive:true});
+  await copyFile(join(source, 'public', 'expert-language.js'), join(root, 'public', 'expert-language.js'));
   try { await symlink(join(source, 'node_modules'), join(root, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir'); } catch (error) { if (error.code !== 'EPERM') throw error; await cp(join(source, 'node_modules'), join(root, 'node_modules'), { recursive: true }); }
   await mkdir(join(root, 'data'));
   await writeFile(join(root, 'data', 'incidents.json'), JSON.stringify([{ id: 'cli-case', title: 'Original', revision: 0 }]));

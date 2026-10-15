@@ -1,3 +1,4 @@
+import {ahuPill} from '../triage.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp } from 'node:fs/promises';
@@ -13,7 +14,7 @@ test('intake through correction and re-analysis preserves unrelated facts', asyn
  const store = createIncidentStore(join(dir, 'cases.json'));
  let correction = false;
  const intake = createIntakeAgent({env:{SOCLAAS_API_KEY:'mock',SOCLAAS_BASE_URL:'https://example.test/v1'},fetchImpl:async()=>({ok:true,json:async()=>({choices:[{message:{content:JSON.stringify({title:'Cooling issue',category:'hvac_cooling',location:'Level 18',asset:'AHU-18-02',occurredAt:'',impact:'Two occupants report discomfort.',observations:correction?'the room temperature is 26°C':'The room temperature is 28.4°C.\nThe fan is running.',actionsTaken:'',affectedScope:'',corrections:correction?['observations']:[],contradictions:[]})}}]})})});
- const handler = createHandler(store, intake, async snapshot => ({summary:'Reported cooling issue requires review.',hypotheses:[{ruleId:'HVAC-01',reasoning:'Review reported readings.',evidence:[{field:'observations',quote:snapshot.fields.observations.split('\n').find(line=>line.includes('room temperature'))}],uncertainties:['Reading timestamp is not provided.']}],actionIds:['check-readings'],missingFields:[],prioritySuggestion:null}));
+ const handler = createHandler(store, intake, async snapshot => ({summary:'Reported cooling issue requires review.',hypotheses:[{ruleId:'HVAC-01',reasoning:'Review reported readings.',evidence:[{field:'observations',quote:snapshot.fields.observations.split('\n').find(line=>line.includes('room temperature'))}],uncertainties:['Reading timestamp is not provided.']}],actionIds:['check-readings'],missingFields:[],prioritySuggestion:null}),{runtimePills:async()=>[ahuPill]});
  async function req(method,url,data) {
   const stream=Readable.from(data===undefined?[]:[JSON.stringify(data)]);
   Object.assign(stream,{method,url,headers:{host:'localhost'}});

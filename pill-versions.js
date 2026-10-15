@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 const canonical = value => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map(k => [k, canonical(value[k])])) : value;
 const equal = (a, b) => JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
 export const libraryToken = records => createHash('sha256').update(JSON.stringify(records.map(r => [r.id, r.revision, r.releases.map(v => [v.pill.version, v.active, Boolean(v.disabled)])]))).digest('hex');
-export const releaseContent = release => ({ ...(release.evaluation ? { evaluation: release.evaluation } : {}), pill: release.pill, sources: release.sources || [], examples: release.examples || [], captureHistory: release.captureHistory || [], learningImports: release.learningImports || [], validation: release.validation, reviewer: release.reviewer, identityVerified: release.identityVerified, notes: release.notes, publishedAt: release.publishedAt });
+export const releaseContent = release => ({ ...(release.expertFeedback ? {expertFeedback:release.expertFeedback,expertTrials:release.expertTrials||[]} : {}), ...(release.evaluation ? { evaluation: release.evaluation } : {}), pill: release.pill, sources: release.sources || [], examples: release.examples || [], captureHistory: release.captureHistory || [], learningImports: release.learningImports || [], validation: release.validation, reviewer: release.reviewer, identityVerified: release.identityVerified, notes: release.notes, publishedAt: release.publishedAt });
 export const releaseHash = release => createHash('sha256').update(JSON.stringify(canonical(releaseContent(release)))).digest('hex');
 
 export function compareReleases(before, after) {
@@ -18,7 +18,7 @@ export function compareReleases(before, after) {
     }
   }
   for (const key of ['boundaries', 'escalationConditions']) add('Safety', key, before.pill[key], after.pill[key]);
-  for (const key of ['sources', 'examples', 'captureHistory', 'learningImports']) add('Evidence', key, before[key] || [], after[key] || []);
+  for (const key of ['sources', 'examples', 'captureHistory', 'learningImports', 'expertFeedback', 'expertTrials']) add('Evidence', key, before[key] || [], after[key] || []);
   add('Evidence', 'evaluation', before.evaluation, after.evaluation);
   return { from: before.pill.version, to: after.pill.version, changes, counts: Object.fromEntries(['added', 'removed', 'modified'].map(type => [type, changes.filter(c => c.type === type).length])) };
 }
