@@ -83,6 +83,8 @@ function unknownTarget(messages, latest) {
   const explicit = latest.match(/^(?:started at|start time|occurred at|\u5f00\u59cb\u65f6\u95f4|\u53d1\u751f\u65f6\u95f4)\s*[:：]\s*(.+)$/i);
   if (explicit && isUnknown(explicit[1])) return 'occurredAt';
   if (!isUnknown(latest)) return '';
+  const previous = messages?.filter(message => message.role === 'assistant').at(-1);
+  if (['occurredAt', 'impact'].includes(previous?.followUpField)) return previous.followUpField;
   const question = messages?.filter(message => message.role === 'assistant').at(-1)?.content || '';
   const candidates = [
     ['occurredAt', /when did|when .*start|how long|\u4ec0\u4e48\u65f6\u5019|\u5f00\u59cb\u65f6\u95f4|\u53d1\u751f\u65f6\u95f4/i],

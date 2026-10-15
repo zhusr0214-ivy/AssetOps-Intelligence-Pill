@@ -21,14 +21,32 @@ export function handlingMarkup(i, running = false) {
   <section class="triage-section"><h3>Learning analyses</h3><div class="actions"><button type="button" data-analyze ${running ? 'disabled' : ''}>${running ? 'Analysis running' : 'Analyze case learning'}</button><button type="button" data-refresh>Refresh</button><a href="/studio/improvements">Improvement queue</a></div>${[...(i.learningRuns || [])].reverse().map(r => `<article class="studio-version"><p>${e(r.createdAt)} / ${e(r.model)} / ${e(r.promptVersion)}</p><p>${e(r.summary)}</p><ul>${r.questions.map(q => `<li>${e(q)}</li>`).join('')}</ul><a href="/studio/improvements#${e(r.id)}">${r.proposals.length} proposals</a><details><summary>Evidence snapshot</summary>${r.snapshot.blocks.map(b => `<p><strong>${e(b.id)}</strong></p><pre class="learning-evidence">${e(b.text)}</pre>`).join('')}</details></article>`).join('') || '<p>No learning analyses.</p>'}</section>`;
 }
 
-export async function renderHandling(root, id, drafts = {}) {
+export async function renderHandling(root, id, drafts = {}, { compact = false } = {}) {
   const { incident, running } = await api(`/api/cases/${encodeURIComponent(id)}/handling`);
   if (!root.isConnected) return;
   root.innerHTML = handlingMarkup(incident, running);
-  const sourcePills = incident.triageReports?.at(-1)?.sourcePills || [];
+  if (compact) {
+    root.classList.add('compact-feedback');
+    const fold = (element, title, open = false) => {
+      if (!element) return;
+      const panel = root.ownerDocument.createElement('details'); panel.className = 'feedback-detail'; panel.open = open;
+      const summary = root.ownerDocument.createElement('summary'); summary.textContent = title; panel.append(summary);
+      element.replaceWith(panel); panel.append(element);
+    };
+    const action = root.querySelector('[data-record="action"]');
+    fold(action.closest('section'), 'Actual action / expert correction', Boolean(drafts.action));
+    fold(root.querySelector('.learning-trail'), 'Pill improvement history');
+    for (const section of [...root.children]) {
+      if (section.querySelector(':scope > h3')?.textContent === 'Handling history') fold(section, 'Previous results and corrections');
+    }
+    root.querySelector('[data-record="outcome"]').closest('section').querySelector('h3').textContent = 'Result & verification';
+    root.querySelector('[data-analyze]').textContent = running ? 'Generating proposal...' : 'Propose Pill improvement';
+  }
+  const sourcePills = incident.triageReports?.at(-1)?.sourcePills || [...(incident.messages || [])].reverse().find(m => m.role === 'assistant' && m.matchedPills?.length)?.matchedPills || [];
   if (sourcePills.length > 1) root.querySelector('[data-analyze]').insertAdjacentHTML('beforebegin', `<label>Learning target<select id="learning-target"><option value="">Select original Pill</option>${sourcePills.map(p => `<option value="${e(p.id)}">${e(p.name)} / ${e(p.version)}</option>`).join('')}</select></label>`);
   for (const [kind, values] of Object.entries(drafts)) {
     const form = root.querySelector(`[data-record="${kind}"]`);
+    form.dataset.dirty = 'true';
     for (const [name, value] of Object.entries(values)) {
       const input = form.elements[name];
       if (input.type === 'checkbox') input.checked = value === 'on'; else input.value = value;
@@ -43,7 +61,7 @@ export async function renderHandling(root, id, drafts = {}) {
     const retained = pendingDrafts();
     const controls = [...root.querySelectorAll('button, input, textarea, select')].map(el => [el, el.disabled]); controls.forEach(([el]) => el.disabled = true);
     root.querySelector('.learning-status').textContent = message;
-    try { await task(); if (savedKind) delete retained[savedKind]; if (root.isConnected) await renderHandling(root, id, retained); }
+    try { await task(); if (savedKind) delete retained[savedKind]; if (root.isConnected) { await renderHandling(root, id, retained, { compact }); root.dispatchEvent(new root.ownerDocument.defaultView.CustomEvent('case-record-saved', { bubbles: true, detail: { analyzed: message === 'Analyzing saved evidence...' } })); } }
     catch (err) { if (root.isConnected) { error.textContent = err.message; error.hidden = false; root.querySelector('.learning-status').textContent = ''; controls.forEach(([el, disabled]) => el.disabled = disabled); } }
     finally { busy = false; }
   }
@@ -70,9 +88,44 @@ export function proposalMarkup(run, p) {
 
 export async function renderLearning(root) {
   const { runs = [], candidates = [] } = await api('/api/learning');
+  const { incidents = [] } = await api('/api/incidents');
   if (!root.isConnected) return;
   root.innerHTML = `<h2>Learning &amp; Improvement</h2>${errorMarkup}${[...runs].reverse().map(run => `<section id="${e(run.id)}"><header class="workspace-heading"><h3>${e(run.title)}</h3><a href="/cases/${e(run.incidentId)}/handling">Case records</a></header><p>${e(run.createdAt)}</p><p>${e(run.summary)}</p><ul>${run.questions.map(q => `<li>${e(q)}</li>`).join('')}</ul>${run.proposals.map(p => proposalMarkup(run, p)).join('') || `<div class="handling-saved"><strong>No change proposed by this analysis.</strong><p>The current evidence did not support a Pill update. This does not complete a version-update test. If new verified evidence or expert corrections reveal a gap, add them to the <a href="/cases/${e(run.incidentId)}/handling">case records</a> and analyze again.</p></div>`}</section>`).join('') || '<p>No learning analyses yet.</p>'}${candidates.length ? '<details class="triage-section"><summary>Earlier human-review feedback</summary><div data-legacy></div></details>' : ''}`;
   if (candidates.length) await renderLegacyFeedback(root.querySelector('[data-legacy]'));
+  const selectedId = new URL(root.ownerDocument.defaultView.location.href).searchParams.get('case') || '';
+  root.insertAdjacentHTML('afterbegin', `<section class="triage-section" data-case-learning><label>Case evidence<select data-learning-case><option value="">Select a Case</option>${incidents.map(i => `<option value="${e(i.id)}" ${i.id === selectedId ? 'selected' : ''}>${e(i.title || i.id)}${i.asset ? ` / ${e(i.asset)}` : ''}</option>`).join('')}</select></label><div data-case-evidence></div><div data-case-validation></div></section>`);
+  const selector = root.querySelector('[data-learning-case]');
+  let selection = 0;
+  async function showCase(id) {
+    const turn = ++selection, evidence = root.querySelector('[data-case-evidence]'), validation = root.querySelector('[data-case-validation]');
+    evidence.textContent = ''; validation.innerHTML = '';
+    if (!id) return;
+    evidence.textContent = 'Loading Case evidence...';
+    try {
+      const { incident } = await api(`/api/cases/${encodeURIComponent(id)}/handling`);
+      if (!root.isConnected || turn !== selection) return;
+      evidence.innerHTML = `<p><a href="/cases/${e(id)}">Open conversation</a></p>${incident.resultFeedback ? `<p>${e(incident.resultFeedback.summary)}</p><small>AI summary / unverified</small>` : ''}${(incident.expertSolutions || []).filter(s => s.pillDraftId).map(s => `<p><a href="/studio/${e(s.pillDraftId)}">Review expert knowledge draft</a></p>`).join('')}<details><summary>Conversation and human evidence</summary>${(incident.messages || []).filter(m => m.role === 'user' && m.state === 'complete').map(m => `<blockquote>${e(m.content)}</blockquote>`).join('')}${(incident.humanConfirmations || []).map(c => `<p>${e(c.decision || 'recorded')} / ${e(c.confirmedBy)}: ${e(c.subject)}</p>`).join('')}${(incident.expertSolutions || []).map(s => `<p>${e(s.expert)}: ${e(s.solution)}</p>`).join('')}</details>`;
+      const workspace = root.ownerDocument.createElement('div'); validation.replaceChildren(workspace);
+      await renderHandling(workspace, id);
+      if (turn !== selection) return;
+      workspace.querySelector(':scope > header')?.remove();
+      workspace.addEventListener('case-record-saved', event => {
+        if (event.detail?.analyzed) void renderLearning(root).catch(error => { if (root.isConnected) evidence.textContent = error.message; });
+      });
+    } catch (error) { if (root.isConnected && turn === selection) evidence.textContent = error.message; }
+  }
+  selector.onchange = () => {
+    const url = new URL(root.ownerDocument.defaultView.location.href);
+    if (selector.value) url.searchParams.set('case', selector.value); else url.searchParams.delete('case');
+    root.ownerDocument.defaultView.history.replaceState({}, '', url);
+    void showCase(selector.value);
+  };
+  root.querySelectorAll('a[href^="/cases/"][href$="/handling"]').forEach(link => {
+    const id = link.getAttribute('href').split('/')[2];
+    link.href = `/studio/improvements?case=${encodeURIComponent(id)}`;
+    link.textContent = 'Review Case evidence';
+  });
+  if (selector.value) await showCase(selector.value);
   let busy = false;
   for (const run of runs) for (const p of run.proposals) {
     const container = root.querySelector(`[data-proposal="${p.id}"]`);

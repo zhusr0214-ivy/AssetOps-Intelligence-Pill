@@ -34,15 +34,28 @@ test('scope field supports old incidents and summary display without becoming re
  assert.match(details({...old.fields,affectedScope:'East zone'}),/Affected scope/);
  assert.match(details({...old.fields,affectedScope:'East zone'}),/East zone/);
 });
-test('priority reminder is hidden only in the latest assistant message and data stays intact',()=>{
+test('legacy assistant priority reminders are hidden while stored and user text stay intact',()=>{
  const old={role:'assistant',content:'Please choose Priority in the summary.'};
  const latest={role:'assistant',content:'The case summary is updated.\nIs anyone trapped?\nPlease choose Priority in the summary.'};
  const incident={priority:'high',messages:[old,latest]};
- assert.equal(visibleAssistantText(old,incident),old.content);
+ assert.equal(visibleAssistantText(old,incident),'');
  assert.match(visibleAssistantText(latest,incident),/Is anyone trapped/);
  assert.ok(!visibleAssistantText(latest,incident).includes('choose Priority'));
  assert.match(latest.content,/choose Priority/);
- assert.match(visibleAssistantText(latest,{...incident,priority:''}),/choose Priority/);
+ assert.ok(!visibleAssistantText(latest,{...incident,priority:''}).includes('choose Priority'));
+ const user={role:'user',content:old.content};
+ assert.equal(visibleAssistantText(user,incident),user.content);
+});
+test('legacy summary prefaces are hidden without changing questions or original messages',()=>{
+ for(const prefix of ['The case summary is updated.','已更新事件摘要。']){
+  const content=prefix+'\nWhere did the issue occur?';
+  const assistant={role:'assistant',content};
+  assert.equal(visibleAssistantText(assistant,{}),'Where did the issue occur?');
+  assert.equal(assistant.content,content);
+  assert.equal(visibleAssistantText({role:'user',content},{}),content);
+ }
+ const quoted={role:'assistant',content:'You asked about "The case summary is updated."'};
+ assert.equal(visibleAssistantText(quoted,{}),quoted.content);
 });
 async function request(handler,method,url,data){
  const req=Readable.from(data===undefined?[]:[JSON.stringify(data)]);
@@ -56,7 +69,7 @@ test('scope survives actual API create, edit, reload and finalize',async t=>{
  const file=join(dir,'incidents.json');
  t.after(async()=>{await unlink(file);await rmdir(dir)});
  const handler=createHandler(createIncidentStore(file));
- const created=await request(handler,'POST','/api/incidents',{description:'AHU warm',location:'Level 18',impact:'Complaints',occurredAt:'Unknown',priority:'high',affectedScope:'East zone'});
+ const created=await request(handler,'POST','/api/incidents',{description:'AHU warm',location:'Level 18',impact:'Complaints',occurredAt:'Unknown',affectedScope:'East zone'});
  assert.equal(created.status,201);
  const path='/api/incidents/'+created.incident.id;
  const saved=await request(handler,'PATCH',path,{affectedScope:'East zone and two meeting rooms'});
@@ -65,4 +78,5 @@ test('scope survives actual API create, edit, reload and finalize',async t=>{
  assert.equal(reloaded.incident.affectedScope,'East zone and two meeting rooms');
  const finalized=await request(handler,'POST',path+'/finalize',{});
  assert.equal(finalized.status,200);assert.equal(finalized.incident.affectedScope,reloaded.incident.affectedScope);
+ assert.equal(finalized.incident.priority,'');
 });

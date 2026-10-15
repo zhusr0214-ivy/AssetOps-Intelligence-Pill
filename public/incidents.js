@@ -59,7 +59,7 @@ export async function renderIncidents(root, pathname, navigate) {
 
 function renderList(view, incidents) {
   view.innerHTML = `
-    <header class="workspace-heading"><div class="case-page-title"><p class="eyebrow">Asset Operations</p><h2>Cases</h2></div><a class="button primary" href="/incidents/new">New incident</a></header>
+    <header class="workspace-heading"><div class="case-page-title"><p class="eyebrow">Asset Operations</p><h2>Cases</h2></div></header>
     <div class="list-toolbar">
       <label class="search-field">Search<input type="search" id="incident-search" placeholder="ID, title, asset or location"></label>
       <label>Status<select id="status-filter">${options(statuses, '', 'All statuses')}</select></label>

@@ -47,13 +47,13 @@ test('irrelevant answer and assistant-only evidence do not suppress safety quest
 });
 test('safety question appears even during title conflict; new questions use English and original Chinese conflict text is preserved',()=>{
  const reply=conversationReply({...base,category:'lift_fault',conflicts:[{field:'title'}]},'\u7535\u68af\u6545\u969c');
- assert.match(reply,/Is anyone trapped/);assert.match(reply,/\u5f85\u6838\u5bf9\u9879/);assert.ok(!reply.includes('undefined'));
+ assert.match(reply,/Is anyone trapped/);assert.match(reply,/对话中确认/);assert.ok(!reply.includes('undefined'));
 });
 test('an explicit unknown diagnostic reading is not repeatedly requested',()=>{
  const first={...base,category:'hvac_cooling',observations:'Multiple areas are affected.'};
  const messages=[{role:'assistant',content:conversationReply(first,'AHU issue')},{role:'user',content:'Unknown'}];
  const next=conversationReply({...first,messages},'Unknown');
- assert.ok(!next.includes('filter differential pressure'));assert.match(next,/case information/);
+ assert.ok(!next.includes('filter differential pressure'));assert.match(next,/reported facts/);
 });
 test('sendMessage supplies saved conversation history to followup generation',async()=>{
  const first={...base,id:'case-1',revision:0,manualFields:[],category:'lift_fault',messages:[]};

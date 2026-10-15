@@ -24,17 +24,20 @@ test('authenticated API adds CSRF and account identity is readonly; viewer has n
   assert.equal(headers['X-CSRF-Token'], 'token'); assert.equal(headers['X-Test'], 'yes');
   root.innerHTML = '<input name="reviewer"><input name="owner">'; bindAccountIdentity(root);
   assert.equal(root.querySelector('[name=reviewer]').value, user.name); assert.equal(root.querySelector('[name=reviewer]').readOnly, true); assert.equal(root.querySelector('[name=owner]').readOnly, false);
-  await renderSettings(root); assert.equal(root.querySelector('#user-editor'), null); assert.ok(root.querySelector('[name=currentPassword]')); assert.equal(root.querySelector('one'), null);
+  await renderSettings(root); assert.equal(root.querySelector('form'), null); assert.ok(root.querySelector('#sign-out')); assert.equal(root.querySelector('one'), null);
 });
-test('admin page renders account controls, runtime counters and escaped audit data', async t => {
+test('settings displays a fixed profile and real account identity without administration requests', async t => {
   const user = { id: 'admin', name: 'Admin', username: 'admin', roles: ['admin'] };
   const root = setup(t, async path => {
     if (path === '/api/auth/session') return response({ user, csrf: 'token' });
-    if (path === '/api/admin/users') return response({ users: [user] });
-    if (path === '/api/admin/health') return response({ modelRuntime: { calls: 2, circuit: 'closed' } });
-    if (path === '/api/admin/audit') return response({ events: [{ at: 'now', method: 'POST', path: '<img src=x>', phase: 'result', status: 200 }] });
     throw new Error(path);
   });
   await sessionRequest('/api/auth/session'); await renderSettings(root);
-  assert.ok(root.querySelector('#user-editor')); assert.match(root.textContent, /"calls":2/); assert.equal(root.querySelector('img'), null);
+  assert.equal(root.querySelector('form, input, select'), null);
+  assert.equal(root.querySelector('h2').textContent, 'Settings');
+  assert.deepEqual([...root.querySelectorAll('.settings-profile h3')].map(h => h.textContent), ['Account', 'Personal information']);
+  assert.match(root.textContent, /Asset Operations/);
+  assert.match(root.textContent, /Demo workspace/);
+  assert.match(root.textContent, /admin/);
+  assert.equal(root.querySelector('[data-page-panel="runtime"], [data-page-panel="audit"]'), null);
 });

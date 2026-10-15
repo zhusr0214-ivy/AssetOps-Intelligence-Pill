@@ -71,7 +71,7 @@ export async function renderReview(root, pathname) {
       const payload = { ...values, revision: data.incident.revision || 0, reportId: data.report.id, factsVerified: form.elements.factsVerified.checked, actions: data.package.actions.map((a, n) => ({ id: a.id, choice: values[`action-${n}`], reason: values[`reason-${n}`] })) };
       payload.coordinationConfirmed = form.elements.coordinationConfirmed?.checked === true;
       button.disabled = true; const error = form.querySelector('.form-error'); error.hidden = true;
-      try { await api(`/api/review/${encodeURIComponent(id)}`, { method: 'POST', body: JSON.stringify(payload) }); if (view.isConnected) await renderReview(root, pathname); }
+      try { await api(`/api/review/${encodeURIComponent(id)}`, { method: 'POST', body: JSON.stringify(payload) }); if (view.isConnected) { await renderReview(root, pathname); root.dispatchEvent(new root.ownerDocument.defaultView.CustomEvent('case-record-saved', { bubbles: true })); } }
       catch (failure) { error.textContent = failure.message; error.hidden = false; button.disabled = false; }
     });
   } catch (error) { if (view.isConnected) view.innerHTML = `${back}<p class="form-error" role="alert">${e(error.message)}</p>`; }

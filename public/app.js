@@ -1,16 +1,12 @@
 import { jumpToSection } from './navigation.js';
 import { renderLibraryPage } from './library.js';
-import { renderIncidents, escapeHtml as e, api } from './incidents.js';
-import { renderTriage } from './triage.js';
-import { renderReview } from './review.js';
+import { escapeHtml as e, api } from './incidents.js';
 import { renderStudio } from './studio.js';
-import { renderHandling } from './learning.js';
-import { renderTasks } from './tasks.js';
+import { renderCaseChat, renderCaseConversations } from './case-chat.js';
 import { renderOperations } from './operations.js';
 import { canonicalPath, caseRoute } from './routes.js';
 import { requireSession, bindAccountIdentity, currentUser } from './session.js';
 import { renderSettings } from './settings.js';
-import { workQueueMarkup } from './workflow.js';
 import { navigationMarkup, selectSubview, syncPageTabs } from './subpages.js';
 import { syncWorkspaceHeader } from './workspace-shell.js';
 
@@ -29,16 +25,6 @@ function updateSubview() {
 }
 function navigate(path) { window.history.pushState({}, '', canonicalPath(path)); renderRoute(); }
 
-async function overview(view) {
-  const [incidents, reviews, studio, library] = await Promise.all([api('/api/incidents'), api('/api/review'), api('/api/studio'), api('/api/library')]);
-  if (!view.isConnected) return;
-  const pending = reviews.cases.filter(c => c.state === 'pending');
-  const rows = cases => cases.map(c => `<li><a href="/cases/${e(c.id)}">${e(c.title)}</a><span>${e(c.asset)} / ${e(c.priority)}</span></li>`).join('');
-  view.innerHTML = `<header class="workspace-heading"><h2>Operations Overview</h2><a class="button primary" href="/cases/new">New case</a></header>${workQueueMarkup(incidents.incidents, reviews.cases, studio.records || [])}<div class="overview-metrics">${[['/cases', 'Cases', incidents.incidents.length], ['/cases/review', 'Pending review', pending.length], ['/studio/improvements', 'Improvement candidates', studio.candidates.length], ['/library', 'Approved Pills', library.pills.length]].map(([url, label, count]) => `<a href="${url}"><span>${label}</span><strong>${count}</strong></a>`).join('')}</div><section class="triage-section"><h3>Recent cases</h3>${incidents.incidents.length ? `<ul class="overview-list">${rows(incidents.incidents.slice(0, 8))}</ul>` : '<p class="empty-state">No cases yet.</p>'}</section>`;
-  view.querySelector('.overview-metrics a[href="/studio/improvements"] strong').textContent = String(studio.candidates.length + (studio.pendingLearningProposals || 0));
-  view.querySelector('.overview-metrics a[href="/library"] strong').textContent = String(new Set(library.pills.map(p => p.id)).size);
-}
-
 async function renderRoute() {
   window.scrollTo({ top: 0, behavior: 'instant' });
   const path = canonicalPath(window.location.pathname);
@@ -53,16 +39,12 @@ async function renderRoute() {
   try {
     if (active === 'cases') {
       const route = caseRoute(path); if (!route) throw new Error('Case page not found.');
-      view.innerHTML = `<header class="workspace-heading"><h2>Case Workspace</h2>${route.id ? '<a href="/cases">All cases</a>' : ''}</header><div class="case-stage"></div>`;
+      view.innerHTML = `<header class="workspace-heading"><h2>Case Workspace</h2>${route.id || path !== '/cases' ? '<a class="back-link" href="/cases"><span class="back-arrow" aria-hidden="true">&larr;</span>All cases</a>' : ''}</header><div class="case-stage"></div>`;
       const content = view.querySelector('.case-stage');
-      if (route.stage === 'tasks') await renderTasks(content, route.id);
-      else if (route.stage === 'handling') await renderHandling(content, route.id);
-      else if (route.stage === 'triage') await renderTriage(content, route.legacy);
-      else if (route.stage === 'review') await renderReview(content, route.legacy);
-      else await renderIncidents(content, route.legacy, navigate);
+      if (route.id || path === '/cases/new') await renderCaseChat(content, route, navigate, path.endsWith('/edit'));
+      else await renderCaseConversations(content);
     } else if (path === '/settings') await renderSettings(view);
-    else if (path === '/overview') await overview(view);
-    else if (path === '/overview/analytics') { view.innerHTML = '<header class="workspace-heading"><h2>Operational analytics</h2></header><div class="analytics-content"></div>'; await renderOperations(view.querySelector('.analytics-content')); }
+    else if (path === '/studio/analytics') { view.innerHTML = '<header class="workspace-heading"><h2>Operational analytics</h2></header><div class="analytics-content"></div>'; await renderOperations(view.querySelector('.analytics-content')); }
     else if (path === '/studio' || path.startsWith('/studio/')) await renderStudio(view, path, navigate);
     else if (path === '/library' || path.startsWith('/library/')) await renderLibraryPage(view, path, window.location.search);
     else throw new Error('Page not found.');
