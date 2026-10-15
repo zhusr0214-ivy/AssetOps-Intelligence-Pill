@@ -3,7 +3,7 @@ import { api, escapeHtml as e, priorities, labels, details } from './incidents.j
 
 const states = { complete: 'Analysis complete', needs_information: 'Needs information', out_of_scope: 'No matching Pill', knowledge_gap: 'Knowledge gap', failed: 'Analysis failed', partial_failure: 'Specialist analysis incomplete' };
 const state = report => report ? (report.stale ? 'Outdated report' : states[report.status]) : 'Not analyzed';
-const back = '<a class="back-link" href="/triage"><span class="back-arrow" aria-hidden="true">&larr;</span>Back to triage</a>';
+const back = '<a class="back-link" href="/cases"><span class="back-arrow" aria-hidden="true">&larr;</span>All cases</a>';
 
 export async function renderTriage(root, pathname) {
   const view = document.createElement('section');
@@ -147,10 +147,10 @@ export function chatMarkup(report, { draft = '', error = '', pending = false } =
     </form></section>`;
 }
 
-export function reportMarkup(report, id, chatState) {
+export function reportMarkup(report, id, chatState, { embedded = false } = {}) {
   const pill = report.pill;
   const rules = new Map((pill?.rules || []).map(rule => [rule.id, rule]));
-  return `<article class="triage-report"><nav class="section-jumps" aria-label="Report sections"><a href="#report-questions">Ask about this analysis</a>${report.actions?.length ? '<a href="#report-checks">Recommended checks</a>' : ''}</nav>
+  return `<article class="triage-report">${embedded ? '' : `<nav class="section-jumps" aria-label="Report sections"><a href="#report-questions">Ask about this analysis</a>${report.actions?.length ? '<a href="#report-checks">Recommended checks</a>' : ''}</nav>`}
     <header class="report-heading"><h3>${e(state(report))}</h3><span class="badge">${pill ? e(`${pill.name} / ${pill.version}`) : 'Outside available scope'}</span></header>
     ${reportDecisionMarkup(report, id)}
     ${report.stale ? '<p class="triage-notice warning">This report refers to an older case snapshot. Confirm the latest intake and run a new analysis.</p>' : ''}
@@ -165,7 +165,7 @@ export function reportMarkup(report, id, chatState) {
     ${report.actions?.length ? `<section id="report-checks" class="triage-section"><h3>Recommended checks</h3><ol class="triage-actions">${report.actions.map(action => `<li><strong>${e(action.title)}</strong> <span class="badge">${action.requiresApproval ? 'Requires human approval' : 'Read-only check'}</span><p>${e(action.instruction)}</p><small>${e(action.owner)} / ${action.ruleIds.map(e).join(', ')}</small></li>`).join('')}</ol></section>` : ''}
     ${report.prioritySuggestion ? `<section class="triage-section"><h3>Priority suggestion: ${e(priorities[report.prioritySuggestion.value])}</h3><p>${e(report.prioritySuggestion.reason)}</p><p class="muted-label">The saved user priority has not been changed.</p></section>` : ''}
     <section class="triage-section"><h3>Boundaries and escalation</h3><p class="muted-label">${report.governance?.evidenceChecked ? 'Rule references, quoted evidence and action IDs passed automated validation. This does not confirm the diagnosis.' : 'No model analysis has passed evidence validation.'}</p><ul>${(report.governance?.boundaries || []).map(value => `<li>${e(value)}</li>`).join('')}</ul><ul>${(report.governance?.escalationConditions || []).map(value => `<li>${e(value)}</li>`).join('')}</ul></section>
-    ${chatMarkup(report, chatState)}
+    ${embedded ? '' : chatMarkup(report, chatState)}
     ${pill ? `<details class="triage-section"><summary>Pill references</summary><p>${e(pill.owner)} / ${e(pill.version)} / ${e(pill.status)}</p>${pill.rules.map(rule => `<div class="rule-reference" id="rule-${e(rule.id)}"><strong>${e(rule.id)}: ${e(rule.title)}</strong><p>${e(rule.guidance)}</p></div>`).join('')}</details>` : ''}
     <details class="triage-section"><summary>Case snapshot used for this report</summary>${details(report.snapshot.fields)}</details>
     <footer class="report-footer">${e(report.id)}<br>Created ${e(new Date(report.createdAt).toLocaleString())} / Model: ${e(report.model || 'Not called')} / Prompt: ${e(report.promptVersion)}</footer>

@@ -18,6 +18,10 @@ export function learningSnapshot(incident) {
   add('case', 'facts', facts);
   if (report) add('triage', 'analysis', { ...report, chat: undefined, stale: report.caseFingerprint !== caseFingerprint(incident) });
   for (const r of incident.reviews || []) add(r.id, 'review', r);
+  for (const m of incident.messages || []) if (m.role === 'user' && m.state === 'complete') add(`chat:${m.id}`, 'user_report_unverified', { content: m.content });
+  for (const r of incident.humanConfirmations || []) add(`confirmation:${r.id}`, 'human_decision_not_execution', r);
+  for (const s of incident.expertSolutions || []) add(`expert:${s.id}`, 'expert_proposal_not_execution', s);
+  if (incident.resultFeedback) add('case-summary', 'ai_summary_unverified', incident.resultFeedback);
   for (const r of records) add(r.id, r.kind, r);
   for (const task of incident.tasks || []) add(task.id, 'task', task);
   return { caseId: incident.id, revision: incident.revision || 0, capturedAt: now(), pill: report?.pill || null, verifiedOutcome, currentOutcomeId: outcome?.id || null, currentActionId: latestAction?.id || null, blocks };
@@ -72,8 +76,19 @@ export function createLearningService(store, studio, agent = createLearningAgent
     async analyze(id, body) {
       const i = await get(id); check(i, body?.revision);
       if (running.has(id)) throw fail('Learning analysis is already running.', 409);
-      if (!i.handlingRecords?.length && !i.reviews?.length) throw fail('Add operational records or expert corrections before learning.');
+      if (!i.handlingRecords?.length && !i.reviews?.length && !i.expertSolutions?.length && !i.messages?.some(m => m.role === 'user' && m.state === 'complete')) throw fail('Add Case conversation evidence, operational records or expert corrections before learning.');
       const snapshot = learningSnapshot(i);
+      if (!i.triageReports?.length) {
+        const references = [...(i.messages || [])].reverse().find(m => m.role === 'assistant' && m.matchedPills?.length)?.matchedPills || [];
+        if (references.length) {
+          const reference = body.targetPillId ? references.find(p => p.id === body.targetPillId) : references.length === 1 ? references[0] : null;
+          if (!reference) throw fail('Choose the referenced Pill to improve.');
+          const runtime = await studio.runtimePills();
+          const pill = runtime.find(p => p.id === reference.id && p.version === reference.version);
+          if (!pill) throw fail('The referenced Pill changed. Obtain a fresh Case assessment before proposing an update.', 409);
+          snapshot.pill = structuredClone(pill);
+        }
+      }
       if (i.triageReports?.at(-1)?.sourcePills?.length > 1) {
         const target = i.triageReports.at(-1).sourcePills.find(p => p.id === body.targetPillId);
         if (!target) throw fail('Choose the original specialist Pill to improve.');

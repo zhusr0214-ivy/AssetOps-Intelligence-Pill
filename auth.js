@@ -11,6 +11,9 @@ const token = () => randomBytes(32).toString('hex');
 export function requiredRole(path, method) {
   if (path.startsWith('/api/admin/')) return ['admin'];
   if (method === 'GET') return roles;
+  if (/^\/api\/cases\/[^/]+\/(expert-solutions|expert-experience-confirmation)$/.test(path)) return ['expert'];
+  if (/^\/api\/cases\/[^/]+\/confirmations$/.test(path)) return ['expert', 'reviewer'];
+  if (/^\/api\/cases\/[^/]+\/result-summary$/.test(path)) return ['operator', 'expert', 'reviewer'];
   if (/^\/api\/review\/[^/]+$/.test(path) || /^\/api\/library\//.test(path) || /\/learning\/[^/]+\/[^/]+\/[^/]+\/review$/.test(path) || /^\/api\/studio\/[^/]+\/(publish|return|review-evaluation)$/.test(path)) return ['reviewer'];
   if (/^\/api\/studio(?:\/|$)/.test(path) || /\/learning\/[^/]+\/[^/]+\/[^/]+\/apply$/.test(path)) return ['expert'];
   if (/^\/api\/cases\/[^/]+\/tasks\/[^/]+$/.test(path)) return ['operator', 'reviewer'];

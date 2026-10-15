@@ -16,7 +16,7 @@ test('extract explicit facts without inventing asset, impact or priority', () =>
   assert.equal(result.fields.priority, '');
   assert.equal(result.fields.asset, '');
   assert.equal(result.fields.impact, '');
-  assert.ok(result.missingFields.includes('priority'));
+  assert.ok(!result.missingFields.includes('priority'));
   assert.ok(result.followUpQuestions.length <= 3);
 });
 

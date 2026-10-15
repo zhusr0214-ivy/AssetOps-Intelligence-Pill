@@ -5,12 +5,15 @@ import { fileURLToPath } from "node:url";
 import { assessIntake, validateFields } from './intake.js';
 import { createIncidentStore } from './incident-store.js';
 import { createIntakeAgent } from './intake-agent.js';
+import { createCaseConversationAgent } from './case-conversation-agent.js';
+import { createCaseRecords } from './case-records.js';
 import { loadLocalEnv } from './config.js';
 import { sendMessage, manualFieldsFor } from './conversation.js';
 import { createTriageService, ahuPill } from './triage.js';
 import { createReviewService } from './review.js';
 import { createPillStudio } from './pill-studio.js';
 import { uploadLimit } from './document-parser.js';
+import { createCaseDocuments } from './case-documents.js';
 import { createLearningService } from './learning.js';
 import { createTaskService } from './tasks.js';
 import { operationsMetrics, operationsCSV } from './operations-metrics.js';
@@ -97,8 +100,12 @@ async function readBody(req) {
   catch { throw Object.assign(new Error('Invalid JSON body.'), { status: 400 }); }
 }
 
-export function createHandler(store = createIncidentStore(process.env.DATA_FILE || join(__dirname, 'data/incidents.json')), intakeAgent = createIntakeAgent(), triageAgent, studio = createPillStudio(process.env.PILL_DATA_FILE || join(__dirname, 'data/pills.json')), learningAgent, coordinator) {
+export function createHandler(store = createIncidentStore(process.env.DATA_FILE || join(__dirname, 'data/incidents.json')), intakeAgent, triageAgent, studio = createPillStudio(process.env.PILL_DATA_FILE || join(__dirname, 'data/pills.json')), learningAgent, coordinator) {
+ const extractionAgent = intakeAgent || createIntakeAgent();
+ const conversationAgent = intakeAgent || createCaseConversationAgent({ extract: extractionAgent, loadPills: () => studio.runtimePills() });
  const busyCases = new Set();
+ const caseDocuments = createCaseDocuments(store);
+ const caseRecords = createCaseRecords(store, studio);
  const triage = createTriageService(store, triageAgent, undefined, undefined, () => studio.runtimePills(), coordinator);
  const review = createReviewService(store, () => studio.runtimePills());
  const learning = createLearningService(store, studio, learningAgent);
@@ -108,6 +115,30 @@ export function createHandler(store = createIncidentStore(process.env.DATA_FILE 
  try {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const path = url.pathname;
+  const recordMatch = path.match(/^\/api\/cases\/([^/]+)\/(confirmations|result-summary|expert-solutions|expert-experience-confirmation)$/);
+  if (recordMatch && req.method === 'POST') {
+    const [, id, operation] = recordMatch;
+    const allowed = ['expert-solutions', 'expert-experience-confirmation'].includes(operation) ? ['admin', 'expert'] : operation === 'confirmations' ? ['admin', 'expert', 'reviewer'] : ['admin', 'operator', 'expert', 'reviewer'];
+    if (!req.authenticatedActor || !req.authenticatedRoles?.some(role => allowed.includes(role))) return sendJson(res, 403, { error: 'Your role does not permit this Case record operation.' });
+    if (busyCases.has(id)) return sendJson(res, 409, { error: 'This Case is being updated. Retry shortly.' });
+    busyCases.add(id);
+    try {
+      const body = await readBody(req);
+      if (operation === 'confirmations' && body.messageId !== undefined && !req.authenticatedRoles.some(role => ['admin', 'reviewer'].includes(role))) return sendJson(res, 403, { error: 'A reviewer account is required for a Case supervision decision.' });
+      const incident = operation === 'confirmations' ? await caseRecords.confirm(id, body) : operation === 'expert-solutions' ? await caseRecords.expertSolution(id, { ...body, deferDraft: true }) : operation === 'expert-experience-confirmation' ? await caseRecords.confirmExperience(id, body) : await caseRecords.summarize(id);
+      return sendJson(res, 200, { incident });
+    } finally { busyCases.delete(id); }
+  }
+  const attachmentMatch = path.match(/^\/api\/incidents\/([^/]+)\/(documents|document-questions)$/);
+  if (attachmentMatch && req.method === 'POST') {
+    const [, id, operation] = attachmentMatch;
+    if (operation === 'document-questions') return sendJson(res, 200, { incident: await caseDocuments.ask(id, await readBody(req)) });
+    let filename;
+    try { filename = decodeURIComponent(req.headers['x-filename'] || ''); } catch { return sendJson(res, 400, { error: 'Invalid filename.' }); }
+    const chunks = []; let size = 0;
+    for await (const chunk of req) { size += Buffer.byteLength(chunk); if (size > uploadLimit) return sendJson(res, 413, { error: 'Files must be no larger than 10 MB.' }); chunks.push(Buffer.from(chunk)); }
+    return sendJson(res, 201, { incident: await caseDocuments.upload(id, filename, Buffer.concat(chunks)) });
+  }
   if (['/api/operations', '/api/operations/export'].includes(path) && req.method === 'GET') {
     const data = operationsMetrics(await store.list(), Object.fromEntries(url.searchParams));
     if (path.endsWith('/export')) { res.writeHead(200, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="assetops-operations.csv"', 'Cache-Control': 'no-store' }); return res.end(operationsCSV(data)); }
@@ -202,7 +233,7 @@ export function createHandler(store = createIncidentStore(process.env.DATA_FILE 
     return sendJson(res, 200, { report: await triage.chat(chatMatch[1], chatMatch[2], body?.question) });
   }
   if (path === '/api/intake/analyze' && req.method === 'POST') {
-    return sendJson(res, 200, await intakeAgent(await readBody(req)));
+    return sendJson(res, 200, await extractionAgent(await readBody(req)));
   }
   if (path === '/api/incidents' && req.method === 'GET') {
     const incidents = (await store.list()).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
@@ -222,7 +253,7 @@ export function createHandler(store = createIncidentStore(process.env.DATA_FILE 
     if (busyCases.has(incident.id)) return sendJson(res, 409, { error: 'This case is being updated. Try again shortly.' });
     if (req.method === 'POST' && match[2] === '/messages') {
       busyCases.add(incident.id);
-      try { return sendJson(res, 200, { incident: await sendMessage(store, incident, await readBody(req), intakeAgent) }); }
+      try { return sendJson(res, 200, { incident: await sendMessage(store, incident, await readBody(req), conversationAgent) }); }
       finally { busyCases.delete(incident.id); }
     }
     if ((req.method === 'PATCH' && !match[2]) || (req.method === 'POST' && match[2] === '/finalize')) {

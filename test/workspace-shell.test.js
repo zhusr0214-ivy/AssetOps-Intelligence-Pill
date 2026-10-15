@@ -31,6 +31,25 @@ test('workspace header keeps actions and metadata, uses safe account text, and i
   assert.equal(doc.querySelector('.context').hidden, true);
 });
 
+test('New case is a title action only in the case workspace, not a subpage tab', t => {
+  const dom = new JSDOM(readFileSync(new URL('../public/index.html', import.meta.url), 'utf8'));
+  t.after(() => dom.window.close());
+  const doc = dom.window.document, root = doc.querySelector('#page');
+  const user = { username: 'admin', roles: ['admin'] };
+  const button = doc.querySelector('.page-title-group [data-new-case]');
+  assert.equal(button.getAttribute('href'), '/cases/new');
+  for (const path of ['/cases', '/cases/tasks', '/cases/INC-1/triage']) {
+    syncWorkspaceHeader(root, path, user);
+    assert.equal(button.hidden, false);
+  }
+  for (const path of ['/cases/new', '/studio', '/overview', '/settings']) {
+    syncWorkspaceHeader(root, path, user);
+    assert.equal(button.hidden, true);
+  }
+  syncWorkspaceHeader(root, '/cases', null);
+  assert.equal(button.hidden, true);
+});
+
 test('five workspace icons are bundled and decorative while navigation stays labelled', t => {
   const modules = ['overview', 'cases', 'studio', 'library'].map(id => ({ id, title: id }));
   const dom = new JSDOM(navigationMarkup(modules, '/cases'));

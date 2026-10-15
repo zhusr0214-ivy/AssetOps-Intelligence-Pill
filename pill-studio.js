@@ -167,6 +167,35 @@ export function createPillStudio(file, { captureAgent = createKnowledgeCaptureAg
       });
     },
     async get(id) { const record = (await list()).find(r => r.id === id); if (!record) throw fail('Pill not found.', 404); return { ...record, evaluationGate: evaluationGate(record), evaluationRunning: evaluating.has(id), documents: (record.documents || []).map(d => ({ ...d, isRunning: running.has(`${id}/${d.id}`) })) }; },
+    importExpertSolution(input) {
+      return mutate(records => {
+        const existing = records.find(r => r.learningImports?.some(v => v.proposalId === input.solutionId));
+        if (existing) return existing;
+        if (!input.actor?.id || !str(input.actor.name, 120) || !str(input.solution, 4000)) throw fail('Authenticated expert and solution are required.', 403);
+        let record;
+        if (input.targetPill) {
+          record = records.find(r => r.id === input.targetPill.id);
+          if (!record?.releases.some(r => r.active && !r.disabled && r.pill.version === input.targetPill.version)) throw fail('The target Pill version changed. Reload the Case before saving.', 409);
+          if (record.state === 'in_review') throw fail('The target Pill is under review. Return its draft before adding expert knowledge.', 409);
+          if (record.state === 'published') record.contributorIds = [];
+        } else {
+          const id = `pill-${randomUUID().slice(0, 8)}`;
+          const category = input.facts.category || 'other';
+          const domain = ['hvac', 'hvac_cooling'].includes(category) ? 'ahu_cooling' : category === 'other' ? 'asset_operations' : category;
+          record = { id, revision: 0, state: 'draft', content: { pill: { id, name: `${input.facts.title || 'Case'} - expert knowledge`.slice(0, 200), owner: input.actor.name, source: input.caseId, scope: input.applicability, domain, applicability: { categories: [category], assetPrefixes: [], keywords: [] }, rules: [], actions: [], boundaries: ['Advisory only. Expert proposals are not evidence of execution.'], escalationConditions: [] }, sources: [], examples: [] }, releases: [], events: [], validation: null };
+          records.push(record);
+        }
+        if (record.content.sources.length >= 20) throw fail('The target draft has reached its knowledge source limit.');
+        const proposal = { id: input.solutionId, title: 'Expert Case solution', disposition: input.targetPill ? 'update_pill' : 'new_pill', applicability: input.applicability, limitations: input.limitations, validationCases: [], decision: { status: 'expert_submitted', reviewer: input.actor.name, reviewedAfter: input.solution } };
+        record.content.sources.push({ expert: input.actor.name, reference: `${input.caseId} / ${input.messageId} / ${input.solutionId}`, knowledge: `${input.solution}\nApplicability: ${input.applicability}\nLimitations: ${input.limitations}\nProposed expert knowledge; outcome is not independently verified.` });
+        invalidateLearning(record);
+        record.learningImports = [...(record.learningImports || []), { kind: 'expert_case_solution', caseId: input.caseId, sourceMessageId: input.messageId, proposalId: input.solutionId, proposal, importedAt: new Date().toISOString(), status: 'pending_incorporation', actorId: input.actor.id }];
+        record.contributorIds = [...new Set([...(record.contributorIds || []), input.actor.id])];
+        record.state = 'draft'; record.validation = null; record.revision++;
+        record.events.push({ action: 'expert_case_solution_imported', caseId: input.caseId, solutionId: input.solutionId, actorId: input.actor.id, revision: record.revision, at: new Date().toISOString() });
+        return record;
+      });
+    },
     importLearning(input, body) {
       return mutate(records => {
         const { proposal: p, snapshot } = input;

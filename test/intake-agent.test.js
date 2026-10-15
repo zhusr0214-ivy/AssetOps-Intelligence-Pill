@@ -27,14 +27,14 @@ test('model request uses configured endpoint/model; user fields and priority are
   assert.equal(result.readyForTriage, true);
 });
 
-test('unsubstantiated facts are discarded and priority must still be user-selected', async () => {
+test('unsubstantiated facts are discarded and optional priority is never invented', async () => {
   const agent = createIntakeAgent({ env, fetchImpl: async () => reply({ ...proposed, impact: '200 people affected', asset: 'AHU-99', priority: 'urgent' }) });
   const result = await agent({ description: source.description });
   assert.equal(result.fields.priority, '');
   assert.equal(result.fields.impact, '');
   assert.equal(result.fields.asset, '');
   assert.equal(result.readyForTriage, false);
-  assert.ok(result.missingFields.includes('priority'));
+  assert.ok(!result.missingFields.includes('priority'));
   assert.ok(result.missingFields.includes('impact'));
 });
 
