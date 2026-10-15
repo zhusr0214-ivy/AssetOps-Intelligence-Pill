@@ -110,3 +110,14 @@ test('draft, publication and history panels remain separate without losing field
   assert.equal(root.querySelectorAll('[data-page-panel=history]:not([hidden])').length, 2);
   assert.equal(root.querySelector('#pill-editor [name=name]').value, 'Test');
 });
+
+test('new Pill shows workflow steps instead of workspace navigation',()=>{
+ for(const path of ['/studio/new','/studio/new/upload','/studio/new/expert']){
+  const dom=new JSDOM(pageTabsMarkup(path));const nav=dom.window.document.querySelector('nav');
+  assert.equal(nav.querySelector('[aria-current=step]').textContent,'1 · Prepare knowledge');
+  assert.equal(nav.querySelectorAll('[aria-disabled=true]').length,2);
+  assert.doesNotMatch(nav.textContent,/Knowledge & drafts|Improvement queue|Operational analytics/);
+  assert.equal(nav.querySelectorAll('a').length,1);dom.window.close();
+ }
+ assert.match(pageTabsMarkup('/studio/p1','?view=evaluation'),/aria-current="page"/);
+});

@@ -46,7 +46,7 @@ test('unavailable analysis returns a retained conclusion, cannot pass, and can b
  let r=await studio.get(ahuPill.id);
  r=await studio.expertTrial(r.id,{revision:r.revision,description:'Room temperature 29 C',authenticatedActor:author});
  assert.equal(r.expertAttempt.status,'analysis_unavailable');assert.equal(r.expertTrials?.length||0,0);
- const html=expertExamplesMarkup(r);assert.match(html,/暂不能可靠判断/);assert.match(html,/Room temperature 29 C/);assert.doesNotMatch(html,/private provider diagnostics|data-expert-feedback/);
+ const html=expertExamplesMarkup(r);assert.match(html,/Analysis unavailable/);assert.match(html,/Room temperature 29 C/);const page=new JSDOM(html);assert.equal(page.window.document.querySelector('[name=description]').value,'Room temperature 29 C');assert.doesNotMatch(html,/\$\{e\(|\+e\(attempt/);page.window.close();assert.doesNotMatch(html,/private provider diagnostics|data-expert-feedback/);
  await assert.rejects(studio.change(r.id,'submit',{revision:r.revision,authenticatedActor:author}),{status:409});
  unavailable=false;r=await studio.expertTrial(r.id,{revision:r.revision,description:r.expertAttempt.description,authenticatedActor:author});assert.equal(r.expertAttempt,undefined);assert.equal(r.expertTrials.length,1);
 });

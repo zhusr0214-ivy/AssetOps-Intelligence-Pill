@@ -27,8 +27,8 @@ test('Studio pages use tabs without duplicate cross-page controls', async t => {
   const { root } = await browser(t, async () => ({ records: [record()] }));
   await renderStudio(root, '/studio', () => {});
   syncPageTabs(root, '/studio', '', true);
-  assert.ok(root.querySelector('a[href="/studio/new"]'));
-  assert.equal(root.querySelectorAll('a[href="/studio/new"]').length, 1);
+  assert.equal(root.querySelector('a[href="/studio/new"]'),null);
+  assert.equal(root.querySelectorAll('a[href="/studio/new"]').length, 0);
   assert.equal(root.querySelectorAll('a[href="/studio/improvements"]').length, 1);
   assert.equal(root.querySelector('.studio-entry-actions'), null);
   assert.equal(root.querySelector('.workspace-heading a'), null);

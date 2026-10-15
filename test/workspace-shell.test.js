@@ -61,3 +61,12 @@ test('five workspace icons are bundled and decorative while navigation stays lab
     assert.ok(link.querySelector('.nav-label').textContent);
   }
 });
+
+test('Create Pill is a primary home action for experts, not a navigation tab',t=>{
+ const dom=new JSDOM(readFileSync(new URL('../public/index.html',import.meta.url),'utf8'));t.after(()=>dom.window.close());
+ const doc=dom.window.document,root=doc.querySelector('#page'),button=doc.querySelector('.page-title-group [data-new-pill]');
+ assert.equal(button.getAttribute('href'),'/studio/new');assert.ok(button.classList.contains('primary'));
+ for(const role of ['expert','admin']){syncWorkspaceHeader(root,'/studio',{roles:[role]});assert.equal(button.hidden,false);}
+ for(const path of ['/studio/new','/studio/p1','/cases','/settings']){syncWorkspaceHeader(root,path,{roles:['expert']});assert.equal(button.hidden,true);}
+ syncWorkspaceHeader(root,'/studio',{roles:['viewer']});assert.equal(button.hidden,true);
+});

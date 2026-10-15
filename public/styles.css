@@ -993,3 +993,16 @@ input, select, textarea { accent-color: #262626; }
 .expert-result-actions li > .muted-label {display:block;margin-top:4px;}
 .expert-examples .expert-result-evidence {margin:20px 0;}
 .expert-examples .expert-feedback-expectation label {margin-top:12px;}
+
+/* Pill pages share the Case title action and left-aligned content. */
+.page-title-group [data-new-pill] { flex:none;gap:4px;min-height:30px;padding:4px 10px;border-radius:4px;font-size:13px;line-height:20px; }
+.pill-create-intro,.pill-create-form {max-width:860px;margin-left:0;margin-right:0;}
+.pill-create-intro {margin-bottom:20px;color:var(--muted);}
+.pill-create-form {padding:0;background:transparent;border:0;border-radius:0;}
+.pill-create-form .source-choice {border:0;border-top:1px solid var(--line);padding:16px 0;margin:20px 0;}
+.pill-create-form .entry-metadata,.pill-create-form .expert-create-related {padding:12px 0;border-top:1px solid var(--line);margin:16px 0;}
+.pill-create-form .create-submit {margin-top:24px;}
+.expert-dialogue > p,.expert-examples > p {max-width:76ch;color:var(--muted);}
+
+.pill-step-tabs > span {padding:14px 0;color:var(--muted);opacity:.65;cursor:default;}
+.pill-step-tabs [aria-current="step"] {color:var(--ink);font-weight:600;border-bottom:3px solid var(--ink);}
