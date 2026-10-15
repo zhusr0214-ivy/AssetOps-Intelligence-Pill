@@ -2,6 +2,7 @@ import { escapeHtml as e } from './incidents.js';
 import { caseRoute, canonicalPath } from './routes.js';
 
 export function workspaceLinks(path, admin = false) {
+  path=canonicalPath(path);
   if (path.startsWith('/overview')) return [['/overview', 'Summary'], ['/overview/analytics', 'Operational analytics']];
   if (path.startsWith('/cases')) {
     const route = caseRoute(path), base = route?.id ? `/cases/${route.id}` : '/cases';
@@ -9,7 +10,7 @@ export function workspaceLinks(path, admin = false) {
   }
   if (path.startsWith('/studio')) {
     const links = [['/studio', 'Knowledge & drafts'], ['/studio/new', 'Create Pill'], ['/studio/improvements', 'Improvement queue']];
-    if (/^\/studio\/[^/]+$/.test(path) && !['/studio/improvements', '/studio/new'].includes(path)) links.push(...[['draft', 'Draft content'], ['sources', 'Sources & learning'], ['evaluation', 'Model evaluation'], ['publication', 'Review & publish'], ['history', 'Change history']].map(([key, label]) => [`${path}?view=${key}`, label]));
+    if (/^\/studio\/[^/]+$/.test(path) && !['/studio/improvements', '/studio/new'].includes(path)) links.push(...[['draft', '1 · Prepare knowledge'], ['evaluation', '2 · Validate recommendations'], ['publication', '3 · Review & release']].map(([key, label]) => [`${path}?view=${key}`, label]));
     return links;
   }
   if (path.startsWith('/library')) {
@@ -29,11 +30,13 @@ export function navigationMarkup(modules, path) {
 }
 
 export function pageTabsMarkup(path, search = '', admin = false) {
+  path=canonicalPath(path);
   let links = workspaceLinks(path, admin);
   if (/^\/studio\/[^/]+$/.test(path) && !['/studio/improvements', '/studio/new'].includes(path)) links = links.filter(([href]) => href.includes('?view='));
   if (path.startsWith('/library/')) links = links.filter(([href]) => href !== '/library');
   const fallback = path.startsWith('/studio') ? 'draft' : path.startsWith('/library') ? 'content' : 'account';
-  const requested = new URLSearchParams(search).get('view') || fallback;
+  const rawView = new URLSearchParams(search).get('view') || fallback;
+  const requested = path.startsWith('/studio/') && rawView === 'sources' ? 'draft' : rawView;
   const current = path.endsWith('/edit') && path.startsWith('/cases/') ? path.slice(0, -5) : path;
   return `<nav class="workspace-tabs" data-page-tabs aria-label="Workspace views">${links.map(([href, label]) => {
     const [target, query] = href.split('?');

@@ -1,9 +1,11 @@
+import {createWorkflowAssessment} from './workflow-assessment.js';
+import {triageContractIssues, classifyInformationNeeds} from './triage-output-contract.js';
 import { readFileSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { assessIntake, fields, priorities } from './intake.js';
 import { createTriageAgent, createTriageChat, triagePromptVersion } from './triage-agent.js';
 import { matchedPills, bundlePills, scopedId, actionConflicts } from './pill-routing.js';
-import { validateCoordination, coordinationPromptVersion } from './coordination-agent.js';
+import { validateCoordination, coordinationPromptVersion, coordinationFailureMessage } from './coordination-agent.js';
 
 export const ahuPill = JSON.parse(readFileSync(new URL('./pills/ahu-cooling.json', import.meta.url), 'utf8'));
 const fail = (message, status = 422) => Object.assign(new Error(message), { status });
@@ -66,7 +68,7 @@ function validateValveStates(value, snapshot, invalid, pill) {
 }
 
 const explicitlyUnknownTime = value => typeof value === 'string' &&
-  /^(?:unknown|not sure|not known|(?:i )?don['’]?t know|未知|不清楚|不知道)[.!。]?$/i.test(value.trim());
+  /^(?:(?:(?:the )?(?:incident )?(?:start time|onset time|occurrence time|time of occurrence)(?:\s+is)?\s*[:：]?\s*)?(?:unknown|not sure|not known|(?:i )?don['’]?t know)|(?:(?:开始|发生|起始)时间\s*[:：]?\s*)?(?:(?:目前|暂时)\s*)?(?:未知|不清楚|不知道))[.!。]?$/i.test(value.trim());
 
 function hasResolvedRoomCorrection(snapshot) {
   const source = ['description', 'observations'].map(key => snapshot.fields[key] || '').join('\n');
@@ -88,8 +90,16 @@ function distinguishUnknownStart(text) {
 }
 
 export function validateTriageResult(value, snapshot, pill) {
-  const invalid = reason => {
-    throw fail(`Report validation failed: ${reason}`, 502);
+  value=classifyInformationNeeds(value,pill);
+  const invalid = (reason, contractCode, evidenceDiagnostic) => {
+    const validationCode = contractCode || (/quote|source field|matching source/.test(reason) ? 'evidence_source'
+      : /evidence must/.test(reason) ? 'evidence_shape'
+      : /ruleId/.test(reason) ? 'rule_reference'
+      : /Action /.test(reason) ? 'action_reference'
+      : /missingFields/.test(reason) ? 'missing_fields'
+      : /prioritySuggestion/.test(reason) ? 'priority_output'
+      : /actual valve state/.test(reason) ? 'unsupported_claim' : 'report_shape');
+    throw Object.assign(fail(`Report validation failed: ${reason}`, 502), { validationCode, ...(evidenceDiagnostic ? {evidenceDiagnostic} : {}) });
   };
   const text = (v, max = 2000) =>
     typeof v === 'string' && v.trim().length > 0 && v.length <= max;
@@ -134,16 +144,17 @@ export function validateTriageResult(value, snapshot, pill) {
 
     for (const [evidenceIndex, evidence] of hypothesis.evidence.entries()) {
       const evidenceLabel = `${label}, evidence ${evidenceIndex + 1}`;
+      const diagnostic = reason => ({hypothesis:index+1,evidence:evidenceIndex+1,field:fields.includes(evidence?.field)?evidence.field:null,quote:typeof evidence?.quote==='string'?evidence.quote.slice(0,200):null,reason});
 
       if (
         !evidence ||
         !fields.includes(evidence.field) ||
         ['title', 'category', 'priority'].includes(evidence.field)
       ) {
-        invalid(`${evidenceLabel}: invalid source field.`);
+        invalid(`${evidenceLabel}: invalid source field.`, 'evidence_source', diagnostic('invalid_source_field_or_evidence_id'));
       }
       if (!text(evidence.quote, 1000)) {
-        invalid(`${evidenceLabel}: quote is missing or exceeds 1000 characters.`);
+        invalid(`${evidenceLabel}: quote is missing or exceeds 1000 characters.`, 'evidence_source', diagnostic('empty_or_oversized_quote'));
       }
       const quote = evidence.quote;
       const foldCase = text =>
@@ -187,7 +198,7 @@ export function validateTriageResult(value, snapshot, pill) {
       }
 
       if (!match) {
-        invalid(`${evidenceLabel}: quote has no unambiguous matching source.`);
+        invalid(`${evidenceLabel}: quote has no unambiguous matching source.`, 'evidence_source', diagnostic('quote_not_found_or_ambiguous_source'));
       }
 
       evidence.field = match.field;
@@ -195,6 +206,7 @@ export function validateTriageResult(value, snapshot, pill) {
     }
   }
 
+  const contractIssues=triageContractIssues(value,snapshot,pill);if(contractIssues.length)invalid(contractIssues[0],contractIssues[0].startsWith('missingFields')?'blocking_requirement':contractIssues[0].startsWith('prioritySuggestion')?'priority_output':contractIssues[0].startsWith('followUpScope:')?'unsupported_follow_up':contractIssues[0].startsWith('unsupportedSafety:')?'unsupported_claim':contractIssues[0].startsWith('unsupportedDate:')?'unsupported_date':contractIssues[0].startsWith('reportLanguage:')?'report_language':contractIssues[0].startsWith('explicitUnknowns:')?'explicit_unknowns':contractIssues[0].startsWith('reportShape:')?'report_shape':contractIssues[0].startsWith('Applicability:')?'applicability':'action_reference');
   const cited = new Set(value.hypotheses.map(item => item.ruleId));
 
   for (const [index, id] of value.actionIds.entries()) {
@@ -251,7 +263,9 @@ export function validateTriageResult(value, snapshot, pill) {
     actions: [...new Set(value.actionIds)].map(id =>
       structuredClone(pill.actions.find(item => item.id === id))
     ),
+    ...(value.followUpQuestions ? {followUpQuestions:value.followUpQuestions} : {}),
     missingFields: [...new Set(value.missingFields)].filter(field => !(field === 'occurredAt' && startReportedUnknown)),
+    ...(snapshot.validationScenario===true && value.blockingReasons?.length ? {blockingReasons:value.blockingReasons.filter(r=>value.missingFields.includes(r.field)).map(r=>({field:r.field,ruleId:r.ruleId,quote:r.quote,reason:r.reason}))} : {}),
     prioritySuggestion: suggestion === null
       ? null
       : { value: suggestion.value, reason: suggestion.reason }
@@ -262,7 +276,7 @@ function reportView(report, incident) {
   return { ...report, stale: report.caseFingerprint !== caseFingerprint(incident) || incident.status !== 'ready_for_triage' };
 }
 
-export function createTriageService(store, agent = createTriageAgent(), model = process.env.SOCLAAS_MODEL || 'default', chatAgent = createTriageChat(), currentPill = async () => ahuPill, coordinator) {
+export function createTriageService(store, agent = createTriageAgent({scopeVerifier:createWorkflowAssessment()}), model = process.env.SOCLAAS_MODEL || 'default', chatAgent = createTriageChat(), currentPill = async () => ahuPill, coordinator) {
   const running = new Map();
   return {
     async list() {
@@ -325,8 +339,8 @@ export function createTriageService(store, agent = createTriageAgent(), model = 
                   const result = validateCoordination(await coordinator({ snapshot, specialists, actions }), actions);
                   report.coordination.agent = { ...result, status: 'complete', promptVersion: coordinationPromptVersion, startedAt, completedAt: new Date().toISOString() };
                   report.coordination.semanticConflictCheck = 'AI-assisted conflict and dependency review; human confirmation required.';
-                } catch {
-                  report.coordination.agent = { status: 'failed', promptVersion: coordinationPromptVersion, startedAt, error: 'Cross-Pill coordination failed. Retry analysis before approval.' };
+                } catch (error) {
+                  report.coordination.agent = { status: 'failed', promptVersion: coordinationPromptVersion, startedAt, error: `Cross-Pill coordination failed: ${coordinationFailureMessage(error)} Retry analysis before approval.` };
                   report.status = 'partial_failure';
                 }
               }

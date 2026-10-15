@@ -91,8 +91,8 @@ test('capture adapter uses the configured model, batches blocks, validates all r
   } });
   const result = await agent({ name: 'ahu.txt', blocks: [...blocks, { id: 'B2', location: 'Paragraph 2', text: 'x'.repeat(12000) }] });
   assert.equal(calls, 2); assert.equal(result.candidates.length, 3);
-  await assert.rejects(createKnowledgeCaptureAgent({ env: {} })({ blocks }), { status: 503 });
-  for (const status of [401, 429, 500]) await assert.rejects(createKnowledgeCaptureAgent({ env, fetchImpl: async () => ({ ok: false, status }) })({ blocks }), error => !error.message.includes('test-secret'));
+  const unconfigured=await createKnowledgeCaptureAgent({ env: {} })({ blocks });assert.equal(unconfigured.sourceOnly,true);assert.equal(unconfigured.captureCompleteness,'partial');
+  for (const status of [401,429,500]){const partial=await createKnowledgeCaptureAgent({env,fetchImpl:async()=>({ok:false,status})})({blocks});assert.equal(partial.captureCompleteness,'partial');assert.equal(partial.sourceOnly,true);assert.ok(!JSON.stringify(partial).includes('test-secret'));}
 });
 test('upload, extraction, selective human correction and merge persist citations without publishing', async t => {
   const { studio, file } = await setup(t);
@@ -108,7 +108,7 @@ test('upload, extraction, selective human correction and merge persist citations
   assert.equal(saved.captureHistory[0].decisions[2].decision, 'rejected');
   assert.ok(saved.captureHistory[0].decisions[0].reviewedText.includes('site team'));
   assert.equal(saved.captureHistory[0].decisions[0].evidence[0].location, 'Page 1');
-  assert.equal(saved.content.pill.actions.at(-1).requiresApproval, true); assert.equal(saved.content.pill.actions.at(-1).owner, '');
+  assert.equal(saved.content.pill.actions.at(-1).requiresApproval, true); assert.equal(saved.content.pill.actions.at(-1).owner, '待确认');
   assert.equal(saved.content.pill.rules.at(-1).actionIds[0], saved.content.pill.actions.at(-1).id);
   assert.ok(saved.content.sources[0].reference.includes(id));
   assert.deepEqual((await studio.original(record.id, id)).bytes, Buffer.from(source));
@@ -137,4 +137,38 @@ test('document endpoints enforce upload types, revisions, download ownership and
   const html = captureMarkup(record); assert.ok(!html.includes('ahu<test>')); assert.ok(html.includes('ahu&lt;test&gt;'));
   assert.equal((await request(handler, 'POST', `/api/studio/${record.id}/documents`, Buffer.from('x'), { 'x-filename': '../bad.txt', 'x-revision': '1' })).status, 422);
   assert.equal((await request(handler, 'POST', `/api/studio/${record.id}/documents`, Buffer.from(source), { 'x-filename': 'again.txt', 'x-revision': '1' })).status, 409);
+});
+
+test('candidate draft saves edits without confirming knowledge and rejects stale revisions', async t => {
+ const {studio}=await setup(t);let record=await upload(studio);const id=record.documents[0].id;record=await studio.analyze(record.id,id,record.revision);const revision=record.revision;const items=record.documents[0].candidates.map(c=>({id:c.id,text:c.text,selected:true}));items[0].text+=' Reviewed.';
+ record=await studio.saveCaptureDraft(record.id,id,{revision,items,actionOwner:'Duty manager'});const loaded=await studio.get(record.id);assert.deepEqual(loaded.documents[0].reviewDraft.items,items);assert.equal(loaded.documents[0].status,'extracted');assert.equal(loaded.content.sources.length,0);assert.equal(loaded.state,'draft');assert.equal(loaded.documents[0].review,undefined);await assert.rejects(studio.saveCaptureDraft(record.id,id,{revision,items,actionOwner:'Duty manager'}),{status:409});
+});
+
+test('reviewed source can be checked again without changing confirmed knowledge before review', async t => {
+ const {studio}=await setup(t);
+ let record=await upload(studio);const docId=record.documents[0].id;
+ record=await studio.analyze(record.id,docId,record.revision);
+ const accept=r=>({revision:r.revision,confirmed:true,reviewer:'QA',actionOwner:'Duty manager',selections:r.documents[0].candidates.map(c=>({id:c.id,text:c.text,replaceId:c.replacementTargetId||''}))});
+ record=await studio.merge(record.id,docId,accept(record));
+ const before=structuredClone(record.content),review=structuredClone(record.documents[0].review);
+ record=await studio.analyze(record.id,docId,record.revision,true);
+ assert.deepEqual(record.content,before);
+ assert.deepEqual(record.documents[0].repairReview,review);
+ assert.deepEqual(record.documents[0].extractionHistory.at(-1).review,review);
+ record=await studio.merge(record.id,docId,accept(record));
+ assert.equal(record.content.pill.rules.length,before.pill.rules.length);
+ assert.equal(record.content.pill.actions.length,before.pill.actions.length);
+ assert.equal(record.content.pill.rules.at(-1).id,before.pill.rules.at(-1).id);
+ assert.equal(record.content.pill.actions.at(-1).id,before.pill.actions.at(-1).id);
+ assert.equal(record.captureHistory.length,2);
+});
+
+test('pending source proposals cannot be submitted as reviewed knowledge',async t=>{
+ const {studio}=await setup(t);let r=await upload(studio);await assert.rejects(studio.change(r.id,'submit',{revision:r.revision,autoValidate:true}),/pending source proposals/);
+});
+
+test('incomplete extraction is persisted as a reviewable draft and cannot be submitted or published',async t=>{
+ const partialAgent=createKnowledgeCaptureAgent({env:{},fetchImpl:async()=>assert.fail('No model configured')});const {studio}=await setup(t,{captureAgent:partialAgent});let r=await upload(studio);r=await studio.analyze(r.id,r.documents[0].id,r.revision);const doc=r.documents[0];assert.equal(doc.status,'extracted');assert.equal(doc.captureCompleteness,'partial');assert.ok(doc.candidates.length);assert.equal((await studio.get(r.id)).documents[0].sourceOnly,true);
+ await assert.rejects(studio.merge(r.id,doc.id,{revision:r.revision,confirmed:true,reviewer:'Expert',selections:[]}),/complete the pending extraction/);
+ for(const operation of ['submit','publish'])await assert.rejects(studio.change(r.id,operation,{revision:r.revision}),/Complete the pending source extraction/);
 });

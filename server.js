@@ -149,7 +149,7 @@ export function createHandler(store = createIncidentStore(process.env.DATA_FILE 
   }
   if (path === '/api/studio' && req.method === 'GET') { const records = await studio.list(), incidents = await store.list(); return sendJson(res, 200, { records, drafts: records.filter(r => r.state !== 'published').map(r => r.content.pill), candidates: incidents.flatMap(i => i.learningCandidates || []), pendingLearningProposals: incidents.flatMap(i => (i.learningRuns || []).flatMap(r => r.proposals)).filter(p => !p.decision).length }); }
   if (path === '/api/studio' && req.method === 'POST') return sendJson(res, 201, { record: await studio.create(await readBody(req)) });
-  const documentMatch = path.match(/^\/api\/studio\/([^/]+)\/documents(?:\/([^/]+)(?:\/(analyze|merge|file))?)?$/);
+  const documentMatch = path.match(/^\/api\/studio\/([^/]+)\/documents(?:\/([^/]+)(?:\/(analyze|merge|file|draft))?)?$/);
   if (documentMatch) {
     const [, pillId, documentId, operation] = documentMatch;
     if (req.method === 'POST' && !documentId) {
@@ -163,9 +163,16 @@ export function createHandler(store = createIncidentStore(process.env.DATA_FILE 
       const { document, bytes } = await studio.original(pillId, documentId);
       res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'X-Content-Type-Options': 'nosniff', 'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(document.name).replace(/'/g, '%27')}` }); return res.end(bytes);
     }
-    if (req.method === 'POST' && operation === 'analyze') { const body = await readBody(req); return sendJson(res, 200, { record: await studio.analyze(pillId, documentId, body?.revision) }); }
+    if (req.method === 'POST' && operation === 'analyze') { const body = await readBody(req); return sendJson(res, 200, { record: await studio.analyze(pillId, documentId, body?.revision, body?.reextract === true) }); }
+    if (req.method === 'POST' && operation === 'draft') { const body=await readBody(req);return sendJson(res,200,{record:await studio.saveCaptureDraft(pillId,documentId,{...body,authenticatedActor:req.authenticatedActor})}); }
     if (req.method === 'POST' && operation === 'merge') return sendJson(res, 200, { record: await studio.merge(pillId, documentId, await readBody(req)) });
     return sendJson(res, 405, { error: 'Method not allowed.' });
+  }
+  const expertMatch=path.match(/^\/api\/studio\/([^/]+)\/expert\/(message|confirm|example|feedback|validate)$/);
+  if(expertMatch){
+    if(req.method!=='POST')return sendJson(res,405,{error:'Method not allowed.'});
+    const methods={message:'expertTurn',confirm:'expertConfirm',example:'expertTrial',feedback:'expertFeedback',validate:'expertValidate'};
+    return sendJson(res,200,{record:await studio[methods[expertMatch[2]]](expertMatch[1],await readBody(req))});
   }
   const evaluationMatch = path.match(/^\/api\/studio\/([^/]+)\/evaluate$/);
   if (evaluationMatch && req.method === 'POST') return sendJson(res, 200, { record: await studio.evaluate(evaluationMatch[1], await readBody(req)) });

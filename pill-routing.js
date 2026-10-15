@@ -13,11 +13,24 @@ export function routingErrors(pill) {
   return errors;
 }
 
+// Narrow a shared plumbing category using phenomena explicitly named in scope.
+// Explicit configured keywords remain authoritative; generic scopes stay broad.
+export function plumbingScopeMatch(incident,pill) {
+ if(incident.category!=='water_leak'||pill.applicability?.keywords?.length)return true;
+ const topics=[/漏水|渗水|滴水|\bleak(?:s|ing|age)?\b|\bdripp?ing\b/iu,/排水缓慢|排水慢|返水|排水受阻|\bslow drain(?:age|ing)?\b|\bbackflow\b/iu,/异味|咕噜|\bodou?r\b|\bsmell\b|\bgurgling\b/iu];
+ const scope=String(pill.scope||'');const scoped=topics.filter(pattern=>pattern.test(scope));
+ if(!scoped.length)return true;
+ const text=[incident.description,incident.observations].filter(Boolean).join('\n');
+ // No symptom narrative is not enough evidence to exclude a candidate.
+ if(!text.trim()||!topics.some(pattern=>pattern.test(text)))return true;
+ return scoped.some(pattern=>pattern.test(text));
+}
+
 export function matchPill(incident, pill) {
   if (!pill) return null;
   const r = pill.applicability;
   if (!r) return (!pill.domain || pill.domain === 'ahu_cooling') && (incident.category === 'hvac_cooling' || incident.category === 'hvac' && /\bAHU\b/i.test(incident.asset || '')) ? ['Legacy AHU category/asset scope'] : null;
-  if (routingErrors(pill).length || !r.categories.includes(incident.category)) return null;
+  if (routingErrors(pill).length || !r.categories.includes(incident.category) || !plumbingScopeMatch(incident,pill)) return null;
   const prefix = r.assetPrefixes.find(v => (incident.asset || '').toLowerCase().startsWith(v.toLowerCase()));
   if (r.assetPrefixes.length && !prefix) return null;
   const text = [incident.description, incident.observations, incident.impact].join('\n').toLowerCase();

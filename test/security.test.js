@@ -54,11 +54,12 @@ test('login throttling, expiry, password change and secure cookie flags', async 
   assert.equal((await auth.login('admin', 'changed-password-123', 'clean-ip')).user.id, admin.id);
 });
 
-test('role matrix denies publication and approval by operators or authors', () => {
+test('role matrix allows expert knowledge publication but preserves other approval boundaries', () => {
   const u = role => ({ roles: [role], disabled: false });
   for (const path of ['/api/review/case', '/api/library/p/versions/1.0/activate', '/api/studio/p/publish', '/api/learning/c/r/p/review']) {
     assert.equal(permitted(u('operator'), path, 'POST'), false);
-    assert.equal(permitted(u('expert'), path, 'POST'), false);
+    assert.equal(permitted(u('expert'), path, 'POST'), path==='/api/studio/p/publish');
+    assert.equal(permitted(u('viewer'), path, 'POST'), false);
     assert.equal(permitted(u('reviewer'), path, 'POST'), true);
   }
   assert.equal(permitted(u('viewer'), '/api/incidents', 'POST'), false);
@@ -92,7 +93,7 @@ test('runtime rejects writes when pre-action audit cannot persist, and drains on
   app.stop(); assert.equal((await request(app, 'GET', '/healthz')).status, 503);
 });
 
-test('authenticated author cannot publish own Pill; another reviewer can', async t => {
+test('authenticated author can confirm own knowledge under the default policy', async t => {
   const { dir } = await setup(t), studio = createPillStudio(join(dir, 'pills.json'));
   let r = await studio.get(ahuPill.id);
   r.content.sources = [{ expert: 'Engineer', reference: 'Fixture', knowledge: 'Verify readings.' }];
@@ -102,7 +103,6 @@ test('authenticated author cannot publish own Pill; another reviewer can', async
   r = await studio.change(r.id, 'validate', { revision: r.revision, authenticatedActor: actor });
   r = await studio.change(r.id, 'submit', { revision: r.revision, authenticatedActor: actor });
   const input = { revision: r.revision, expertConfirmed: true, reviewer: 'Reviewer', notes: 'Reviewed fixture.', authenticatedActor: actor };
-  await assert.rejects(studio.change(r.id, 'publish', input), { status: 403 });
-  const published = await studio.change(r.id, 'publish', { ...input, authenticatedActor: { id: 'reviewer-id', name: 'Reviewer' } });
-  assert.equal(published.releases.at(-1).identityVerified, true); assert.equal(published.releases.at(-1).actorId, 'reviewer-id');
+  const published = await studio.change(r.id, 'publish', input);
+  assert.equal(published.releases.at(-1).identityVerified, true); assert.equal(published.releases.at(-1).actorId, 'author-id');
 });

@@ -24,8 +24,8 @@ test('sidebar contains only main workspaces; subpages use content tabs', t => {
   assert.equal(root.querySelectorAll('.subnav').length, 0);
   assert.equal(root.querySelectorAll('aside a').length, 5);
   assert.equal(root.querySelector('aside [aria-current=page]').getAttribute('href'), '/studio');
-  assert.equal(root.querySelector('main [aria-current=page]').textContent, 'Model evaluation');
-  assert.equal(root.querySelectorAll('main a').length, 5);
+  assert.equal(root.querySelector('main [aria-current=page]').textContent, '2 · Validate recommendations');
+  assert.equal(root.querySelectorAll('main a').length, 3);
 });
 
 test('page tabs sit directly after the heading and synchronize without repeated DOM mutations', t => {

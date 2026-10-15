@@ -26,14 +26,14 @@ async function setup(t, evaluationAgent = agent) {
   const publish = () => change('publish', { reviewer: 'Expert', notes: 'Reviewed sources and evaluation.', expertConfirmed: true });
   return { file, studio, change, evaluate, review, publish, get: () => studio.get(r.id) };
 }
-test('suite enforces positive and negative cases and strict expected result types', () => {
-  assert.equal(validateSuite(suite()).length, 2);
-  for (const value of [[], [suite()[0]], [suite()[0], suite()[0]], [{ ...suite()[0], expected: { ...suite()[0].expected, ruleIds: 'HVAC-01' } }, suite()[1]]]) assert.throws(() => validateSuite(value), { status: 422 });
+test('suite accepts relevant supported cases and enforces strict expected result types', () => {
+  assert.equal(validateSuite(suite()).length, 2);assert.equal(validateSuite([suite()[0]]).length,1);assert.throws(()=>validateSuite([suite()[1]]),{status:422});
+  for (const value of [[], [{ ...suite()[0], expected: { ...suite()[0].expected, ruleIds: 'HVAC-01' } }, suite()[1]]]) assert.throws(() => validateSuite(value), { status: 422 });
 });
 test('release gate, evaluation evidence and checksums survive restart', async t => {
-  const s = await setup(t); await s.review(); await assert.rejects(s.publish(), /must pass/);
+  const s = await setup(t); await assert.rejects(s.review(), /successful evaluation/);
   const r = await s.evaluate(); assert.equal(r.evaluationGate.passed, true); assert.equal(r.evaluations[0].results.length, 2);
-  const released = await s.publish(), release = released.releases.at(-1);
+  await s.review(); const released = await s.publish(), release = released.releases.at(-1);
   assert.equal(release.evaluation.passed, true); assert.equal(release.contentHash, releaseHash(release));
   assert.equal((await createPillStudio(s.file).get(ahuPill.id)).evaluationGate.state, 'published_with_evaluation');
   await s.change('fork'); assert.equal((await s.get()).evaluationGate.state, 'outdated');
@@ -42,13 +42,14 @@ test('release gate, evaluation evidence and checksums survive restart', async t 
 test('edits invalidate evaluation and suite cannot be emptied to remove its gate', async t => {
   const s = await setup(t); await s.evaluate(); const r = await s.get(); r.content.pill.scope += ' Updated scope.';
   await s.change('save', { content: r.content }); assert.equal((await s.get()).evaluationGate.state, 'outdated');
+  await assert.rejects(s.review(), /successful evaluation/);
   await assert.rejects(s.change('save-evaluations', { suite: [] }), { status: 422 });
   assert.equal((await s.get()).evaluationRequired, true);
 });
 test('provider and ungrounded evidence failures persist as failed evaluations', async t => {
   const s = await setup(t, async () => { throw new Error('secret provider detail'); });
   const r = await s.evaluate(); assert.equal(r.evaluationGate.state, 'failed'); assert.ok(!JSON.stringify(r.evaluations).includes('secret provider'));
-  await s.review(); await assert.rejects(s.publish(), /must pass/);
+  await assert.rejects(s.review(), /successful evaluation/);
   const record = await s.get(); const run = await evaluatePill(record, async () => { const result = await agent(); result.hypotheses[0].evidence[0].quote = 'invented'; return result; });
   assert.equal(run.passed, false);
 });
@@ -75,8 +76,15 @@ test('evaluation UI preserves dirty suites, sends structured tests and escapes r
   const root = dom.window.document.querySelector('main'); let operation;
   bindEvaluation(root, r, (op, data) => { operation = { op, data }; }, () => {});
   const name = root.querySelector('[name=testName]'); name.value = '<script>test</script>'; name.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
-  root.querySelector('[data-run-evaluation]').click(); assert.equal(operation, undefined); assert.match(root.querySelector('#studio-error').textContent, /Save/);
+  root.querySelectorAll('[name=workflow-steps]').forEach(el=>el.value='Record symptoms and refer within the supplied knowledge scope.');
+  root.querySelector('[data-run-evaluation]').click(); assert.equal(operation.op,'save-evaluations');assert.equal(operation.data.sharedExamples,true);
   root.querySelector('form').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
   assert.equal(operation.op, 'save-evaluations'); assert.equal(operation.data.suite.length, 2);
   assert.ok(!evaluationMarkup({ ...r, evaluationSuite: operation.data.suite }).includes('<script>'));
+});
+
+test('Save only persists an incomplete scenario across restart without allowing evaluation', async t => {
+ const s=await setup(t);const row={name:'Unfinished scenario',mode:'scenario',facts:{category:'hvac_cooling',description:'Reported warm room'},expected:{status:'complete',ruleIds:[],actionIds:[],missingFields:[]}};
+ await s.change('save-evaluations',{suite:[row],draftOnly:true,sharedExamples:true,autoValidate:true});
+ const restored=await createPillStudio(s.file).get(ahuPill.id);assert.equal(restored.evaluationSuite[0].name,'Unfinished scenario');assert.equal(restored.evaluationSuite[0].facts.description,'Reported warm room');assert.equal(restored.validation.passed,false);await assert.rejects(s.evaluate(),{status:422});
 });
