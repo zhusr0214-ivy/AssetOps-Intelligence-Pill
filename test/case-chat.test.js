@@ -5,7 +5,6 @@ import { renderCaseChat, renderCaseConversations } from '../public/case-chat.js'
 import { sessionRequest } from '../public/session.js';
 import { readFileSync } from 'node:fs';
 import { confirmationMarkup } from '../public/case-records.js';
-import { renderLearning } from '../public/learning.js';
 
 const incident = () => ({ id: 'C1', title: 'Cooling issue', asset: 'AHU-1', createdAt: '2026-10-14T08:00:00Z', occurredAt: 'Yesterday', status: 'ready_for_triage', revision: 3, description: 'Too warm', location: 'Level 2', impact: 'Comfort', messages: [], reviews: [] });
 const summary = () => ({ summary: 'Cooling issue under investigation.', actions: 'Not reported', outcome: 'not_reported', remaining: 'Need readings', feedback: '', evidence: [], verified: false, caseRevision: 4 });
@@ -236,22 +235,4 @@ test('selected attachment question shares the Case message endpoint', async t =>
   await until(() => root.querySelector('[data-document-id]'));
   enter(root, window, 'What reading?'); await until(() => root.textContent.includes('The file says 24 C.'));
   assert.deepEqual(posts, ['/api/incidents/C1/documents', '/api/incidents/C1/messages']);
-});
-
-test('Pill improvement queue owns Case evidence, expert draft links and validation controls', async t => {
-  const current = incident(); current.resultFeedback = summary();
-  current.expertSolutions = [{ id: 'E1', expert: 'Expert', solution: 'Proposed approach', pillDraftId: 'P1' }];
-  const { root, window } = await browser(t, url => {
-    if (url === '/api/learning') return { runs: [], candidates: [] };
-    if (url === '/api/incidents') return { incidents: [current] };
-    if (url === '/api/cases/C1/handling') return { incident: current };
-    assert.fail(`Unexpected request: ${url}`);
-  });
-  window.history.replaceState({}, '', '/studio/improvements?case=C1');
-  await renderLearning(root);
-  assert.equal(root.querySelector('[data-learning-case]').value, 'C1');
-  assert.ok(root.querySelector('a[href="/studio/P1"]'));
-  assert.ok(root.querySelector('[data-case-validation] [data-analyze]'));
-  assert.ok(root.querySelector('[data-case-validation] [data-record="outcome"]'));
-  assert.match(root.querySelector('[data-case-evidence]').textContent, /unverified/);
 });

@@ -32,67 +32,66 @@ const manualFields = () => '<details class="entry-metadata"><summary>Contributor
 export async function renderCaptureEntry(view, mode, navigate) {
   const user = currentUser();
   if (!user?.roles?.some(role => ['admin','expert'].includes(role))) { view.innerHTML='<header class="workspace-heading"><h2>Create Pill</h2></header><p>Creating knowledge requires an expert account.</p><a href="/studio">Return to Pill Studio</a>'; return; }
-  view.innerHTML = `<header class="workspace-heading"><h2>Create Pill</h2></header><section class="pill-create-intro"><p>Add experience or a reference file. Review, test and release.</p></section><form id="capture-entry" class="pill-create-form" novalidate><div class="studio-fields"><label>Pill name<input name="name" maxlength="200" placeholder="For example: Lift initial assessment" required></label><label>Professional domain<select name="domain"><option value="ahu_cooling">HVAC cooling</option><option value="hvac_local_comfort">Indoor comfort</option><option value="energy">Energy</option><option value="electrical_distribution">Electrical distribution</option><option value="water_leak">Water leaks</option><option value="lift_fault">Lift faults</option><option value="asset_operations">General asset operations</option></select></label></div><fieldset class="source-choice"><legend>Knowledge source</legend><label><input type="radio" name="sourceMode" value="file" checked>Upload reference material</label><label><input type="radio" name="sourceMode" value="experience">Enter expert experience</label></fieldset><div data-entry-file><label>Reference file<input type="file" name="file" accept=".pdf,.docx,.txt,.md,.png,.jpg,.jpeg" hidden></label><div class="file-choice"><button type="button" data-choose-file>Choose reference file</button><span data-file-name>No file selected</span></div><p class="muted-label">PDF, DOCX, TXT, Markdown or image · up to 10 MB</p></div><div data-entry-experience hidden>${manualFields()}</div><details class="entry-metadata"><summary>Owner &amp; source details</summary><label>Knowledge owner<input name="owner" maxlength="120" value="${e(user.name || user.username)}" required></label><p>The signed-in contributor is recorded. You can change the owner before generating the draft.</p></details><p class="form-error" role="alert" hidden></p><p role="status"></p><a data-open-draft hidden>Open saved draft to review knowledge</a><div class="create-submit"><p>Nothing is published until you review and release it.</p><button type="submit" class="primary">Generate knowledge draft</button></div></form>`;
-  const form = view.querySelector('form'); let record, sources, index = 0, documentId;
-  const related=view.ownerDocument.createElement('details');related.className='expert-create-related';related.innerHTML='<summary>Related knowledge</summary><button type="button" data-find-related>Find existing knowledge in this domain</button><div data-related-results aria-live="polite"></div>';form.querySelector('.source-choice').before(related);
-  related.querySelector('button').onclick=async()=>{
-    const result=related.querySelector('[data-related-results]');result.textContent='Finding related knowledge…';
-    try{const {records=[]}=await api('/api/studio');const domain=form.elements.domain.value;const items=records.filter(r=>r.content?.pill?.domain===domain);result.innerHTML=items.length?'<p>Consider adding your experience to one of these capabilities:</p>'+items.map(r=>`<p><a href="/studio/${encodeURIComponent(r.id)}?view=draft">${e(r.content.pill.name)}</a> · ${e(r.state)}</p>`).join(''):'No capability exists in this domain yet. You can start one below.';}catch(error){result.textContent=error.message;}
+  view.innerHTML = `<header class="workspace-heading"><h2>Create Pill</h2></header><form id="capture-entry" class="pill-create-form" novalidate><label>Pill name<input name="name" maxlength="200" placeholder="For example: Floor lighting failure assessment" required></label><label>Knowledge<textarea name="experience" rows="8" maxlength="12000" placeholder="Enter your knowledge or experience"></textarea></label><input type="file" name="file" aria-label="Upload file" accept=".pdf,.docx,.txt,.md,.png,.jpg,.jpeg" hidden><div class="file-choice"><button type="button" data-choose-file>Upload file</button><span data-file-name aria-live="polite"></span><button type="button" data-remove-file hidden aria-label="Remove file" title="Remove file">&times;</button></div><p class="form-error" role="alert" hidden></p><p role="status"></p><div class="create-submit"><button type="submit" class="primary">Create Pill</button></div></form>`;
+  view.insertAdjacentHTML('afterbegin', '<a class="back-link" href="/studio" aria-label="Back to Pill Studio"><span aria-hidden="true">&larr;</span> Pill Studio</a>');
+  const form = view.querySelector('form');
+  const contributor = user.name || user.username;
+  let record, sources, index = 0, documentId, message;
+  const chooseFile = form.querySelector('[data-choose-file]'), removeFile = form.querySelector('[data-remove-file]');
+  chooseFile.onclick = () => form.elements.file.click();
+  const showFile = () => {
+    const file = form.elements.file.files[0];
+    form.querySelector('[data-file-name]').textContent = file?.name || '';
+    removeFile.hidden = !file;
   };
-  form.elements.expert.value = user.name || user.username;
-  form.querySelector('[data-choose-file]').onclick=()=>form.elements.file.click();
-  form.elements.file.onchange=()=>{form.querySelector('[data-file-name]').textContent=form.elements.file.files[0]?.name || 'No file selected';};
-  form.elements.name.addEventListener('blur',()=>{if(form.elements.name.value.trim())related.querySelector('button').click();});
-  form.elements.domain.addEventListener('change',()=>related.querySelector('button').click());
-  const changeSource = () => { const manual=form.elements.sourceMode.value === 'experience'; form.querySelector('[type=submit]').textContent=manual?'Discuss this experience':'Generate knowledge draft'; form.querySelector('[data-entry-file]').hidden=manual; form.querySelector('[data-entry-experience]').hidden=!manual; };
-  form.querySelectorAll('[name="sourceMode"]').forEach(input=>input.addEventListener('change',changeSource));
+  form.elements.file.onchange = showFile;
+  removeFile.onclick = () => { form.elements.file.value = ''; showFile(); };
 
   form.onsubmit = async event => {
-    event.preventDefault(); const button = form.querySelector('[type="submit"]'); if (button.disabled) return;
-    const errorEl = form.querySelector('.form-error'), status = form.querySelector('[role="status"]'); errorEl.hidden = true;
+    event.preventDefault();
+    const button = form.querySelector('[type="submit"]');
+    if (button.disabled) return;
+    const errorEl = form.querySelector('.form-error'), status = form.querySelector('[role="status"]');
+    errorEl.hidden = true;
     try {
       if (!sources) {
         if (!form.elements.name.value.trim()) throw new Error('Enter the Pill name.');
-        if (!form.elements.owner.value.trim()) {form.querySelector('.entry-metadata').open=true;throw new Error('Enter a knowledge owner.');}
-        const manualMode=form.elements.sourceMode.value === 'experience';
-        const file = manualMode ? null : form.elements.file.files[0], manual = manualMode ? experienceFile(form) : null;
-        if (!file && !manual) { throw new Error(manualMode ? 'Enter the expert experience to prepare a draft.' : 'Choose a reference file to generate the draft.'); }
-        sources = [file, manual].filter(Boolean);
-        if (sources.some(file => !file.size || file.size > 10 * 1024 * 1024)) { sources = null; throw new Error('Select a nonempty file up to 10 MB.'); }
+        const file = form.elements.file.files[0];
+        message = form.elements.experience.value.trim();
+        if (!file && !message) throw new Error('Enter knowledge or upload a reference file.');
+        if (message.length > 12000) throw new Error('Keep knowledge within 12,000 characters.');
+        if (file && (!file.size || file.size > 10 * 1024 * 1024)) throw new Error('Select a nonempty file up to 10 MB.');
+        const writtenSource = message ? new File([`Expert: ${contributor}\nReference: Direct expert contribution\n\n${message}`], 'expert-experience.txt', {type:'text/plain'}) : null;
+        sources = [file, writtenSource].filter(Boolean);
       }
-      button.disabled = true; form.querySelectorAll('input, textarea, select').forEach(el => el.disabled = true);
-      if (!record) record = (await api('/api/studio', { method: 'POST', body: JSON.stringify({ name: form.elements.name.value, owner: form.elements.owner.value, domain: form.elements.domain.value }) })).record;
+      button.disabled = true;
+      chooseFile.disabled = true; removeFile.disabled = true;
+      form.querySelectorAll('input, textarea').forEach(el => el.disabled = true);
+      if (!record) record = (await api('/api/studio', { method: 'POST', body: JSON.stringify({ name: form.elements.name.value.trim() }) })).record;
       else record = (await api(`/api/studio/${encodeURIComponent(record.id)}`)).record;
-      const link = form.querySelector('[data-open-draft]'); link.href = `/studio/${encodeURIComponent(record.id)}?view=draft`; link.hidden = false;
-      if(form.elements.sourceMode.value==='experience'){
-        const message=form.elements.experience.value.trim();
-        status.textContent='Organizing your experience and preparing a useful follow-up…';
-        const dialogue=record.expertDialogue;
-        if(!dialogue||dialogue.status==='failed'||dialogue.messages?.at(-1)?.text!==message){
-          record=(await api(`/api/studio/${encodeURIComponent(record.id)}/expert/message`,{method:'POST',body:JSON.stringify({revision:record.revision,...(dialogue?.status==='failed'?{kind:'retry'}:{message,sourceReference:form.elements.reference.value,expertName:form.elements.expert.value})})})).record;
-        }
-        if(view.isConnected)navigate(`/studio/${encodeURIComponent(record.id)}?view=draft`);
-        return;
-      }
       while (index < sources.length) {
         if (!documentId) {
-          status.textContent = `Saving source ${index + 1} of ${sources.length}...`;
+          status.textContent = 'Saving reference file...';
           const previous = new Set((record.documents || []).map(d => d.id));
           record = await uploadSource(record, sources[index]);
           documentId = record.documents.find(d => !previous.has(d.id))?.id;
           if (!documentId) throw new Error('Source response incomplete. Open the saved draft to inspect it.');
         }
-        status.textContent = `Extracting knowledge from source ${index + 1} of ${sources.length}...`;
+        status.textContent = 'Extracting knowledge from reference file...';
         if (!['extracted', 'reviewed'].includes(record.documents.find(d => d.id === documentId)?.status)) record = await analyzeSource(record, documentId);
         index++; documentId = null;
       }
-      if (view.isConnected) navigate(`/studio/${encodeURIComponent(record.id)}?view=draft`);
+      if (view.isConnected) navigate(`/studio/${encodeURIComponent(record.id)}?view=preview`);
     } catch (error) {
       if (!view.isConnected) return;
       errorEl.textContent = error.message; errorEl.hidden = false; button.disabled = false;
-      status.textContent = record ? 'Draft retained. Retry extraction or inspect the saved sources.' : '';
-      button.textContent = record ? 'Retry remaining extraction' : 'Generate knowledge draft';
-      if (!record) { sources = null; form.querySelectorAll('input, textarea, select').forEach(el => el.disabled = false); }
+      status.textContent = record ? 'Draft retained. Retry to continue.' : '';
+      button.textContent = record ? 'Retry' : 'Create Pill';
+      if (!record) {
+        sources = null;
+        chooseFile.disabled = false; removeFile.disabled = false;
+        form.querySelectorAll('input, textarea').forEach(el => el.disabled = false);
+      }
     }
   };
 }

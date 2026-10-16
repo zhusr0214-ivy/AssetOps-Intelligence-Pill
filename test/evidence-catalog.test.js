@@ -15,6 +15,7 @@ test('catalog keeps negation and exact source text; resolution never trusts mode
  assert.throws(()=>validateTriageResult(resolveCaseEvidence(output([{evidenceId:'E999'}]),catalog),{validationScenario:true,fields:facts},pill),e=>e.validationCode==='evidence_source'&&e.evidenceDiagnostic.reason==='invalid_source_field_or_evidence_id');
 });
 test('adapter resolves corrected evidence IDs and retries unknown IDs without making up evidence',async()=>{
+ const facts={category:'water_leak',description:'Water is dripping from the sink.',observations:'Dripping continues.'};
  for(const repairs of [true,false]){
  let calls=0;const requests=[];
  const agent=createTriageAgent({env:{SOCLAAS_API_KEY:'fixture',SOCLAAS_BASE_URL:'https://fixture.invalid/v1'},fetchImpl:async(url,options)=>{requests.push(JSON.parse(options.body));calls++;return {ok:true,json:async()=>({choices:[{message:{content:JSON.stringify(output([{evidenceId:calls===2&&repairs?'E1':'E999'}]))}}]})};}});

@@ -96,24 +96,25 @@ test('imported knowledge cannot publish until incorporated, validated and explic
   const { service, studio, incident, accepted } = await setup(t); const run = await accepted();
   let r = await service.apply(incident.id, run.id, run.proposals[0].id, { revision: 0 });
   const content = structuredClone(r.content); content.examples = [{ scenario: 'Independent readings mismatch.', rationale: 'Compare before diagnosis.', ruleIds: ['HVAC-01'], actionIds: ['check-readings'] }];
-  r = await studio.change(r.id, 'save', { revision: r.revision, content });
-  r = await studio.change(r.id, 'validate', { revision: r.revision }); assert.equal(r.validation.passed, true);
-  r = await studio.change(r.id, 'submit', { revision: r.revision });
-  await assert.rejects(studio.change(r.id, 'publish', { revision: r.revision, reviewer: 'Expert', notes: 'Reviewed', expertConfirmed: true }), { status: 422 });
-  r = await studio.change(r.id, 'incorporate-learning', { revision: r.revision, proposalId: run.proposals[0].id, reviewer: 'Expert', notes: 'HVAC-01 comparison and example reviewed.', expertConfirmed: true });
-  r = await studio.change(r.id, 'save', { revision: r.revision, content: r.content });
+  const auth = { authenticatedActor: { id: 'admin1', name: 'Admin' }, authenticatedRoles: ['admin'] };
+  r = await studio.change(r.id, 'save', { revision: r.revision, content, ...auth });
+  r = await studio.change(r.id, 'validate', { revision: r.revision, ...auth }); assert.equal(r.validation.passed, true);
+  r = await studio.change(r.id, 'submit', { revision: r.revision, ...auth });
+  r = await studio.change(r.id, 'incorporate-learning', { revision: r.revision, proposalId: run.proposals[0].id, reviewer: 'Admin', notes: 'HVAC-01 comparison and example reviewed.', expertConfirmed: true, ...auth });
+  r = await studio.change(r.id, 'save', { revision: r.revision, content: r.content, ...auth });
   assert.equal(r.learningImports[0].status, 'pending_incorporation');
-  r = await studio.change(r.id, 'incorporate-learning', { revision: r.revision, proposalId: run.proposals[0].id, reviewer: 'Expert', notes: 'Rechecked saved content and example.', expertConfirmed: true });
-  r = await studio.change(r.id, 'validate', { revision: r.revision }); r = await studio.change(r.id, 'submit', { revision: r.revision });
-  r = await studio.change(r.id, 'publish', { revision: r.revision, reviewer: 'Expert', notes: 'Reviewed', expertConfirmed: true });
+  r = await studio.change(r.id, 'incorporate-learning', { revision: r.revision, proposalId: run.proposals[0].id, reviewer: 'Admin', notes: 'Rechecked saved content and example.', expertConfirmed: true, ...auth });
+  r = await studio.change(r.id, 'validate', { revision: r.revision, ...auth }); r = await studio.change(r.id, 'submit', { revision: r.revision, ...auth });
+  r = await studio.change(r.id, 'publish', { revision: r.revision, ...auth });
   assert.equal(r.releases[0].learningImports[0].releasedVersion, '1.0.0'); assert.equal((await studio.active()).version, '1.0.0');
 });
 test('outdated original Pill version cannot be imported into a newer release', async t => {
   const { service, studio, incident, accepted } = await setup(t); const run = await accepted();
   let r = await studio.get(ahuPill.id); const content = structuredClone(r.content);
   content.sources = [{ expert: 'A', reference: 'Fixture', knowledge: 'Verify readings.' }]; content.examples = [{ scenario: 'Room warm', rationale: 'Verify readings.', ruleIds: ['HVAC-01'], actionIds: ['check-readings'] }];
-  r = await studio.change(r.id, 'save', { revision: r.revision, content }); r = await studio.change(r.id, 'validate', { revision: r.revision }); r = await studio.change(r.id, 'submit', { revision: r.revision }); r = await studio.change(r.id, 'publish', { revision: r.revision, reviewer: 'Expert', notes: 'Reviewed', expertConfirmed: true });
-  r = await studio.change(r.id, 'fork', { revision: r.revision });
+  const auth = { authenticatedActor: { id: 'admin1', name: 'Admin' }, authenticatedRoles: ['admin'] };
+  r = await studio.change(r.id, 'save', { revision: r.revision, content, ...auth }); r = await studio.change(r.id, 'validate', { revision: r.revision, ...auth }); r = await studio.change(r.id, 'submit', { revision: r.revision, ...auth }); r = await studio.change(r.id, 'publish', { revision: r.revision, ...auth });
+  r = await studio.change(r.id, 'fork', { revision: r.revision, ...auth });
   await assert.rejects(service.apply(incident.id, run.id, run.proposals[0].id, { revision: r.revision }), { status: 409 });
 });
 test('manual cases without a Pill can create an explicitly scoped non-AHU draft', async t => {

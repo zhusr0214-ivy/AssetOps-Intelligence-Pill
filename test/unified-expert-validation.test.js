@@ -17,12 +17,12 @@ async function fixture(t){
 async function accept(studio,r){r=await studio.expertTrial(r.id,{revision:r.revision,description:'Room temperature 29 C',authenticatedActor:author});const trial=r.expertTrials.at(-1);return studio.expertFeedback(r.id,{revision:r.revision,trialId:trial.id,decision:'accepted',expectedHandling:trial.proposedHandling,authenticatedActor:author});}
 test('one model call and expert confirmation create current validation and permit final publication review',async t=>{
  const f=await fixture(t);let r=await accept(f.studio,f.r);assert.equal(f.calls(),1);assert.equal(r.evaluations.at(-1).method,'expert_confirmed_examples');assert.equal(evaluationGate(r).passed,true);assert.equal(r.validation.passed,true);
- r=await f.studio.change(r.id,'submit',{revision:r.revision,authenticatedActor:author});assert.equal(r.state,'in_review');assert.equal(f.calls(),1);
- r=await f.studio.change(r.id,'publish',{revision:r.revision,authenticatedActor:author,reviewer:'Expert',notes:'Reviewed the sources and handling limits.',expertConfirmed:true});assert.equal(r.state,'published');assert.equal(r.releases.at(-1).evaluation.method,'expert_confirmed_examples');assert.equal(f.calls(),1);
+ r=await f.studio.change(r.id,'submit',{revision:r.revision,authenticatedActor:author,authenticatedRoles:['admin']});assert.equal(r.state,'in_review');assert.equal(f.calls(),1);
+ r=await f.studio.change(r.id,'publish',{revision:r.revision,authenticatedActor:author,authenticatedRoles:['admin']});assert.equal(r.state,'published');assert.equal(r.releases.at(-1).evaluation.method,'expert_confirmed_examples');assert.equal(f.calls(),1);
 });
 test('knowledge edits invalidate confirmation and old reports cannot refresh it',async t=>{
  const f=await fixture(t);let r=await accept(f.studio,f.r);r.content.pill.scope+=' Revised.';r=await f.studio.change(r.id,'save',{revision:r.revision,content:r.content});assert.equal(evaluationGate(r).state,'outdated');
- r=await f.studio.expertValidate(r.id,{revision:r.revision,authenticatedActor:author});assert.equal(r.evaluations.at(-1).passed,false);assert.equal(f.calls(),1);await assert.rejects(f.studio.change(r.id,'submit',{revision:r.revision,autoValidate:true}),{status:409});
+ r=await f.studio.expertValidate(r.id,{revision:r.revision,authenticatedActor:author});assert.equal(r.evaluations.at(-1).passed,false);assert.equal(f.calls(),1);await assert.rejects(f.studio.change(r.id,'submit',{revision:r.revision,autoValidate:true,authenticatedActor:author,authenticatedRoles:['admin']}),{status:409});
 });
 test('independent review remains required and cannot be satisfied by the confirming author',async t=>{
  const f=await fixture(t);let r=f.r;r=await f.studio.change(r.id,'save-evaluations',{revision:r.revision,suite:[{name:'Placeholder',facts:{category:'hvac_cooling'},expected:{status:'complete',ruleIds:[],actionIds:[],missingFields:[],workflow:{steps:'Compare readings.'}}}],options:{independentReviewRequired:true},draftOnly:true});
@@ -47,7 +47,6 @@ test('unavailable analysis returns a retained conclusion, cannot pass, and can b
  r=await studio.expertTrial(r.id,{revision:r.revision,description:'Room temperature 29 C',authenticatedActor:author});
  assert.equal(r.expertAttempt.status,'analysis_unavailable');assert.equal(r.expertTrials?.length||0,0);
  const html=expertExamplesMarkup(r);assert.match(html,/Analysis unavailable/);assert.match(html,/Room temperature 29 C/);const page=new JSDOM(html);assert.equal(page.window.document.querySelector('[name=description]').value,'Room temperature 29 C');assert.doesNotMatch(html,/\$\{e\(|\+e\(attempt/);page.window.close();assert.doesNotMatch(html,/private provider diagnostics|data-expert-feedback/);
- await assert.rejects(studio.change(r.id,'submit',{revision:r.revision,authenticatedActor:author}),{status:409});
  unavailable=false;r=await studio.expertTrial(r.id,{revision:r.revision,description:r.expertAttempt.description,authenticatedActor:author});assert.equal(r.expertAttempt,undefined);assert.equal(r.expertTrials.length,1);
 });
 

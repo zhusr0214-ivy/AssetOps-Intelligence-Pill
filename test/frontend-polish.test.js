@@ -8,9 +8,13 @@ const pill = JSON.parse(await readFile(new URL('../pills/ahu-cooling.json', impo
 test('library filters rules, version and scope and links every catalog action', () => {
   assert.equal(filterPills([pill], 'HVAC-03').length, 1);
   assert.equal(filterPills([pill], 'absentword').length, 0);
-  const html = pillMarkup(pill);
-  for (const action of pill.actions) assert.ok(html.includes(`id="${pill.id}-${action.id}"`));
+  const html = pillMarkup({...pill, status:'approved'});
+  for (const action of pill.actions) assert.ok(html.includes(`id="${pill.id}-${pill.version}-${action.id}"`));
   assert.ok(html.includes(pill.version));
+  const draft = pillMarkup({...pill, status:'draft'});
+  assert.ok(draft.includes('Draft · not released'));
+  assert.ok(!draft.includes('Approved · v'));
+  for (const action of pill.actions) assert.ok(draft.includes(`id="${pill.id}-${action.id}"`));
   assert.ok(pillMarkup({...pill, name:'<script>alert(1)</script>'}).includes('&lt;script&gt;'));
 });
 test('collapsed history retains all messages and escapes user content', () => {

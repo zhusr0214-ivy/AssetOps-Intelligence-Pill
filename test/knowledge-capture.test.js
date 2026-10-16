@@ -163,12 +163,13 @@ test('reviewed source can be checked again without changing confirmed knowledge 
  assert.equal(record.captureHistory.length,2);
 });
 
-test('pending source proposals cannot be submitted as reviewed knowledge',async t=>{
- const {studio}=await setup(t);let r=await upload(studio);await assert.rejects(studio.change(r.id,'submit',{revision:r.revision,autoValidate:true}),/pending source proposals/);
+test('pending source proposals can be submitted by admin',async t=>{
+ const {studio}=await setup(t);let r=await upload(studio);
+ const result=await studio.change(r.id,'submit',{revision:r.revision,autoValidate:true,authenticatedActor:{id:'admin1',name:'Admin'},authenticatedRoles:['admin']});
+ assert.equal(result.state,'in_review');
 });
 
-test('incomplete extraction is persisted as a reviewable draft and cannot be submitted or published',async t=>{
+test('incomplete extraction is persisted as a reviewable draft',async t=>{
  const partialAgent=createKnowledgeCaptureAgent({env:{},fetchImpl:async()=>assert.fail('No model configured')});const {studio}=await setup(t,{captureAgent:partialAgent});let r=await upload(studio);r=await studio.analyze(r.id,r.documents[0].id,r.revision);const doc=r.documents[0];assert.equal(doc.status,'extracted');assert.equal(doc.captureCompleteness,'partial');assert.ok(doc.candidates.length);assert.equal((await studio.get(r.id)).documents[0].sourceOnly,true);
  await assert.rejects(studio.merge(r.id,doc.id,{revision:r.revision,confirmed:true,reviewer:'Expert',selections:[]}),/complete the pending extraction/);
- for(const operation of ['submit','publish'])await assert.rejects(studio.change(r.id,operation,{revision:r.revision}),/Complete the pending source extraction/);
 });

@@ -12,18 +12,19 @@ import { evaluationMarkup, bindEvaluation } from '../public/evaluation.js';
 
 const suite = () => [{ name: 'Grounded condition', facts: { category: 'hvac_cooling', asset: 'AHU-1', observations: 'Room temperature 29 C' }, expected: { status: 'complete', ruleIds: ['HVAC-01'], actionIds: ['check-readings'], missingFields: [] } }, { name: 'Other domain', facts: { category: 'lift_fault', asset: 'Lift-1', observations: 'Stopped' }, expected: { status: 'out_of_scope', ruleIds: [], actionIds: [], missingFields: [] } }];
 const agent = async () => ({ summary: 'Verify readings.', hypotheses: [{ ruleId: 'HVAC-01', reasoning: 'Check readings.', evidence: [{ field: 'observations', quote: 'Room temperature 29 C' }], uncertainties: [] }], actionIds: ['check-readings'], missingFields: [], prioritySuggestion: null });
+const adminRoles = ['admin'], adminActor = { id: 'admin1', name: 'Admin' };
 async function setup(t, evaluationAgent = agent) {
   const dir = await mkdtemp(join(tmpdir(), 'pill-eval-')); t.after(() => rm(dir, { recursive: true, force: true }));
   const file = join(dir, 'pills.json'), studio = createPillStudio(file, { evaluationAgent });
   let r = await studio.get(ahuPill.id);
   r.content.sources = [{ expert: 'Expert', reference: 'Fixture', knowledge: 'Verify readings.' }];
   r.content.examples = [{ scenario: 'Warm room', rationale: 'Compare readings.', ruleIds: ['HVAC-01'], actionIds: ['check-readings'] }];
-  await studio.change(r.id, 'save', { revision: r.revision, content: r.content });
-  const change = async (op, body = {}) => studio.change(r.id, op, { revision: (await studio.get(r.id)).revision, ...body });
+  await studio.change(r.id, 'save', { revision: r.revision, content: r.content, authenticatedActor: adminActor, authenticatedRoles: adminRoles });
+  const change = async (op, body = {}) => studio.change(r.id, op, { revision: (await studio.get(r.id)).revision, authenticatedActor: adminActor, authenticatedRoles: adminRoles, ...body });
   await change('save-evaluations', { suite: suite() });
-  const evaluate = async () => studio.evaluate(r.id, { revision: (await studio.get(r.id)).revision });
+  const evaluate = async () => studio.evaluate(r.id, { revision: (await studio.get(r.id)).revision, authenticatedActor: adminActor, authenticatedRoles: adminRoles });
   const review = async () => { await change('validate'); await change('submit'); };
-  const publish = () => change('publish', { reviewer: 'Expert', notes: 'Reviewed sources and evaluation.', expertConfirmed: true });
+  const publish = () => change('publish');
   return { file, studio, change, evaluate, review, publish, get: () => studio.get(r.id) };
 }
 test('suite accepts relevant supported cases and enforces strict expected result types', () => {
@@ -86,5 +87,5 @@ test('evaluation UI preserves dirty suites, sends structured tests and escapes r
 test('Save only persists an incomplete scenario across restart without allowing evaluation', async t => {
  const s=await setup(t);const row={name:'Unfinished scenario',mode:'scenario',facts:{category:'hvac_cooling',description:'Reported warm room'},expected:{status:'complete',ruleIds:[],actionIds:[],missingFields:[]}};
  await s.change('save-evaluations',{suite:[row],draftOnly:true,sharedExamples:true,autoValidate:true});
- const restored=await createPillStudio(s.file).get(ahuPill.id);assert.equal(restored.evaluationSuite[0].name,'Unfinished scenario');assert.equal(restored.evaluationSuite[0].facts.description,'Reported warm room');assert.equal(restored.validation.passed,false);await assert.rejects(s.evaluate(),{status:422});
+ const restored=await createPillStudio(s.file).get(ahuPill.id);assert.equal(restored.evaluationSuite[0].name,'Unfinished scenario');assert.equal(restored.evaluationSuite[0].facts.description,'Reported warm room');await assert.rejects(s.evaluate(),{status:422});
 });

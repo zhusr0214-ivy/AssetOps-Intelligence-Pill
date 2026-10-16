@@ -46,9 +46,9 @@ export function publicationStatusMarkup(record) {
 }
 function row(item = { facts: {}, expected: {} }, record) {
   const mode=item.mode || (item.name ? 'incident' : 'scenario');
-  const ruleMode='manual';
+  // Preserve legacy rule expectations when editing a saved suite.
+  const ruleMode=item.ruleMode || (item.expected.workflow || item.expected.ruleIds?.length ? 'manual' : 'linked');
   const selectedRules=ruleMode==='linked'?linkedExpectedRules(record,item.expected.actionIds||[]):item.expected.ruleIds||[];
-  const rulesChanged=ruleMode==='linked' && JSON.stringify([...selectedRules].sort())!==JSON.stringify([...(item.expected.ruleIds||[])].sort());
   const category=item.facts.category || record.content?.pill?.applicability?.categories?.[0] || 'other';
   const judgement={complete:'Assessment can proceed',needs_information:'More information is needed',knowledge_gap:'Knowledge does not cover this situation',out_of_scope:'Outside this Pill’s scope'};
   const supplementary=['location','asset','occurredAt','affectedScope','impact','actionsTaken','observations','priority'];
@@ -78,7 +78,7 @@ export function bindEvaluation(view, record, operate, refresh) {
   const mark = () => { const run=view.querySelector('[data-run-evaluation]');if(run&&!record.evaluationRunning)run.disabled=false; dirty = true; form.dataset.dirty = 'true';const count=form.querySelectorAll('[data-evaluation-case]').length;const countEl=view.querySelector('[data-case-count]');if(countEl)countEl.textContent=`${count} ${count===1?'case':'cases'}`; form.querySelector('[data-suite-feedback]').textContent = `${form.querySelectorAll('[data-evaluation-case]').length} cases in this form — unsaved changes. Run evaluation will save your cases first.`; };
   const updateRules=(el,derive)=>{
     if(derive){const selected=[...el.querySelectorAll('[data-expected="actionIds"]:checked')].map(x=>x.value),ids=linkedExpectedRules(record,selected);el.querySelectorAll('[data-expected="ruleIds"]').forEach(input=>input.checked=ids.includes(input.value));el.querySelector('[name="ruleIds"]').value=ids.join(', ');}
-    const manual=el.querySelector('[name="ruleMode"]').value==='manual';el.querySelectorAll('[data-expected="ruleIds"]').forEach(input=>input.disabled=!manual);el.querySelector('[data-rule-summary]').textContent=ruleSummary(el.querySelector('[name="ruleIds"]').value.split(',').map(v=>v.trim()).filter(Boolean),record);
+    const manual=el.querySelector('[name="ruleMode"]').value==='manual';el.querySelector('[data-rule-override]').checked=manual;el.querySelectorAll('[data-expected="ruleIds"]').forEach(input=>input.disabled=!manual);el.querySelector('[data-rule-summary]').textContent=ruleSummary(el.querySelector('[name="ruleIds"]').value.split(',').map(v=>v.trim()).filter(Boolean),record);
   };
   form?.querySelectorAll('[data-evaluation-case]').forEach(el=>updateRules(el,false));
   form?.addEventListener('input', event => {

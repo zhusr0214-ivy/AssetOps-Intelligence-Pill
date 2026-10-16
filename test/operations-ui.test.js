@@ -6,6 +6,7 @@ import { operationsMarkup, renderOperations } from '../public/operations.js';
 import { operationsMetrics } from '../operations-metrics.js';
 import { renderReview } from '../public/review.js';
 import { renderStudio } from '../public/studio.js';
+import {sessionRequest} from '../public/session.js';
 import { ahuPill } from '../triage.js';
 import { caseRoute } from '../public/routes.js';
 
@@ -77,24 +78,20 @@ test('multi-Pill review sends reconciliation as a boolean plus notes', async t =
   assert.equal(submitted.coordinationConfirmed, true); assert.equal(submitted.coordinationNotes, 'Cross-domain review completed');
 });
 
-test('Pill Studio saves explicit applicability and declared action coordination fields', async t => {
+test('Pill editing preserves routing and action coordination metadata', async t => {
   let submitted;
-  const record = { id: ahuPill.id, revision: 1, state: 'draft', content: { pill: { ...structuredClone(ahuPill), domain: 'ahu_cooling' }, sources: [], examples: [] }, releases: [], events: [], documents: [] };
-  const { root, window } = browser(t, async (url, options) => {
-    if (url === '/api/learning') return { candidates: [] };
-    if (options.method === 'POST') { submitted = JSON.parse(options.body); return { record: { ...record, content: submitted.content } }; }
-    return { record };
+  const record = { id: ahuPill.id, revision: 1, state: 'draft', content: { pill: { ...structuredClone(ahuPill), domain: 'energy', applicability:{categories:['energy'],assetPrefixes:['AHU-'],keywords:['demand']} }, sources: [], examples: [] }, releases: [], documents: [] };
+  record.content.pill.actions[0].coordinationKey='shared-mode';record.content.pill.actions[0].coordinationValue='inspect';
+  const {root}=browser(t,async(url,options)=>{
+    if(url==='/api/auth/session')return {user:{id:'expert',name:'Expert',roles:['expert']}};
+    if(options.method==='POST'){submitted=JSON.parse(options.body);return {record:{...record,content:submitted.content}};}
+    return {record};
   });
-  await renderStudio(root, `/studio/${record.id}`, () => {});
-  const form = root.querySelector('#pill-editor'); form.elements.domain.value = 'energy';
-  form.querySelector('[name=routingCategory][value=hvac_cooling]').checked = true;
-  form.elements.assetPrefixes.value = 'AHU-'; form.elements.routingKeywords.value = 'energy, demand';
-  form.querySelector('[name=coordinationKey]').value = 'shared-mode'; form.querySelector('[name=coordinationValue]').value = 'inspect';
-  form.dispatchEvent(new window.Event('input', { bubbles: true }));
-  form.dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true })); await until(() => submitted);
-  assert.equal(submitted.content.pill.domain, 'energy');
-  assert.deepEqual(submitted.content.pill.applicability, { categories: ['hvac_cooling'], assetPrefixes: ['AHU-'], keywords: ['energy', 'demand'] });
-  assert.equal(submitted.content.pill.actions[0].coordinationKey, 'shared-mode');
+  await sessionRequest('/api/auth/session');await renderStudio(root,`/studio/${record.id}`,()=>{});
+  root.querySelector('[data-edit-preview]').click();root.querySelector('[name=scope]').value='Energy assessment';
+  root.querySelector('[data-save-preview]').click();await until(()=>submitted);
+  assert.deepEqual(submitted.content.pill.applicability,record.content.pill.applicability);
+  assert.equal(submitted.content.pill.domain,'energy');assert.equal(submitted.content.pill.actions[0].coordinationKey,'shared-mode');
 });
 test('operations filters bind the export to applied criteria and recover from invalid ranges', async t => {
   const calls = [];

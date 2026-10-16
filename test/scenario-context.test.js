@@ -11,12 +11,27 @@ test('scenario metadata reaches initial and corrective requests without leaking 
  for(const body of requests){const data=JSON.parse(body.messages.find(m=>m.role==='user').content);assert.equal(data.validationScenario,true);assert.deepEqual(data.case,fields);assert.equal(data.expected,undefined);}
  requests.length=0;await agent({fields},{id:'p',rules:[],actions:[]});assert.equal(JSON.parse(requests[0].messages[1].content).validationScenario,false);
 });
+test('saved linked, manual and workflow expectations survive reopening and saving', t=>{
+ for(const ruleMode of ['linked','manual'])for(const withWorkflow of [false,true]){
+  const record=r(),item=record.evaluationSuite[0];item.ruleMode=ruleMode;item.expected.ruleIds=['R1'];
+  if(withWorkflow)item.expected.workflow={steps:'Record the reported facts and refer for assessment.'};
+  const dom=new JSDOM(`<main><p id="studio-error"></p>${evaluationMarkup(record)}</main>`);t.after(()=>dom.window.close());
+  const view=dom.window.document.querySelector('main');let sent;
+  bindEvaluation(view,record,async(op,body)=>{if(op==='save-evaluations')sent=body;return false;},()=>{});
+  assert.equal(view.querySelector('[data-rule-override]').checked,ruleMode==='manual');
+  view.querySelector('#evaluation-suite').dispatchEvent(new dom.window.Event('submit',{cancelable:true}));
+  assert.equal(sent.suite[0].ruleMode,ruleMode);
+  assert.deepEqual(sent.suite[0].expected.ruleIds,withWorkflow||ruleMode==='linked'?['R1','R2']:['R1']);
+  assert.equal(sent.suite[0].expected.workflow?.steps,item.expected.workflow?.steps);
+ }
+});
 test('saved scenario derives readable expected rules from recommendations and preserves an explicit override',async t=>{
  const record=r(),dom=new JSDOM(`<main><p id="studio-error"></p>${evaluationMarkup(record)}</main>`);t.after(()=>dom.window.close());const view=dom.window.document.querySelector('main');let sent;
  bindEvaluation(view,record,async(op,body)=>{if(op==='save-evaluations')sent=body;return false;},()=>{});
- const row=view.querySelector('[data-evaluation-case]');assert.match(row.querySelector('[data-rule-summary]').textContent,/Record unknowns.*Safety escalation/);assert.equal(row.querySelector('[data-rule-refresh]').hidden,false);assert.equal(row.querySelector('[data-expected=ruleIds]').disabled,true);
- view.querySelector('[data-run-evaluation]').click();assert.deepEqual(sent.suite[0].expected.ruleIds,['R1','R2']);assert.equal(sent.suite[0].ruleMode,'linked');assert.equal(validateSuite(sent.suite)[0].ruleMode,'linked');
+ const row=view.querySelector('[data-evaluation-case]');assert.match(row.querySelector('[data-rule-summary]').textContent,/Record unknowns.*Safety escalation/);assert.equal(row.querySelector('[data-rule-refresh]'),null);assert.equal(row.querySelector('[data-expected=ruleIds]').disabled,true);
+ const save=()=>view.querySelector('#evaluation-suite').dispatchEvent(new dom.window.Event('submit',{bubbles:true,cancelable:true}));
+ view.querySelector('[data-run-evaluation]').click();assert.equal(sent,undefined);assert.match(view.querySelector('[data-suite-feedback]').textContent,/expected handling steps/);
+ save();assert.deepEqual(sent.suite[0].expected.ruleIds,['R1','R2']);assert.equal(sent.suite[0].ruleMode,'linked');assert.equal(validateSuite(sent.suite)[0].ruleMode,'linked');
  const override=row.querySelector('[data-rule-override]');override.checked=true;override.dispatchEvent(new dom.window.Event('input',{bubbles:true}));const rule=row.querySelector('[data-expected=ruleIds][value=R2]');assert.equal(rule.disabled,false);rule.checked=false;rule.dispatchEvent(new dom.window.Event('input',{bubbles:true}));
- view.querySelector('[data-run-evaluation]').click();assert.deepEqual(sent.suite[0].expected.ruleIds,['R1']);assert.equal(sent.suite[0].ruleMode,'manual');
+ save();assert.deepEqual(sent.suite[0].expected.ruleIds,['R1']);assert.equal(sent.suite[0].ruleMode,'manual');
 });
-

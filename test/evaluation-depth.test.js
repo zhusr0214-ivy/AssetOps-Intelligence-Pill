@@ -45,7 +45,8 @@ test('expert review is independent, scoped, immutable and captured in publicatio
   const author = { id: 'author', name: 'Author' }, reviewer = { id: 'reviewer', name: 'Expert' };
   r.content.sources = [{ expert: 'Expert', reference: 'Source', knowledge: 'Compare readings.' }];
   r.content.examples = [{ scenario: 'Warm room', rationale: 'Check readings', ruleIds: ['HVAC-01'], actionIds: ['check-readings'] }];
-  const change = async (operation, input = {}) => { r = await studio.change(r.id, operation, { revision: r.revision, authenticatedActor: author, ...input }); return r; };
+  const adminRoles = ['admin'];
+  const change = async (operation, input = {}) => { r = await studio.change(r.id, operation, { revision: r.revision, authenticatedActor: author, authenticatedRoles: adminRoles, ...input }); return r; };
   await change('save', { content: r.content }); await change('save-evaluations', { suite: suite(), options: {...record().evaluationOptions,independentReviewRequired:true} });
   r = await studio.evaluate(r.id, { revision: r.revision, authenticatedActor: author });
   const input = () => ({ revision: r.revision, runId: r.evaluations.at(-1).id, authenticatedActor: reviewer, decision: 'accepted', confirmed: true, scope: 'AHU-1 warm room', limitations: 'No plant control authority', qualification: 'Building operations experience', reference: 'Expert review fixture', notes: 'Reviewed every trial and source' });
@@ -55,10 +56,9 @@ test('expert review is independent, scoped, immutable and captured in publicatio
   assert.equal(r.evaluations.at(-1).expertReview.certification, false);
   await assert.rejects(studio.reviewEvaluation(r.id, input()), { status: 409 });
   await change('validate'); await change('submit');
-  const published = await change('publish', { authenticatedActor: reviewer, reviewer: reviewer.name, notes: 'Scoped approval', expertConfirmed: true });
+  const published = await change('publish', { authenticatedActor: reviewer, authenticatedRoles: adminRoles });
   assert.equal(published.releases.at(-1).evaluation.expertReview.actorId, reviewer.id);
-  assert.equal(permitted({ roles: ['expert'] }, `/api/studio/${r.id}/review-evaluation`, 'POST'), true);
-  assert.equal(permitted({ roles: ['reviewer'] }, `/api/studio/${r.id}/review-evaluation`, 'POST'), true);
+  assert.equal(permitted({ roles: ['admin'] }, `/api/studio/${r.id}/review-evaluation`, 'POST'), true);
 });
 test('UI saves repeat policy with suite and labels evidence limitations', t => {
   const r = record(), dom = new JSDOM(`<main><p id="studio-error"></p>${evaluationMarkup(r)}</main>`); t.after(() => dom.window.close());

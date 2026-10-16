@@ -54,12 +54,15 @@ test('login throttling, expiry, password change and secure cookie flags', async 
   assert.equal((await auth.login('admin', 'changed-password-123', 'clean-ip')).user.id, admin.id);
 });
 
-test('role matrix allows expert knowledge publication but preserves other approval boundaries', () => {
+test('role matrix allows admin publication but preserves other approval boundaries', () => {
   const u = role => ({ roles: [role], disabled: false });
-  for (const path of ['/api/review/case', '/api/library/p/versions/1.0/activate', '/api/studio/p/publish', '/api/learning/c/r/p/review']) {
+  for (const path of ['/api/review/case', '/api/library/p/versions/1.0/activate', '/api/studio/p/publish', '/api/studio/p/submit', '/api/learning/c/r/p/review']) {
     assert.equal(permitted(u('operator'), path, 'POST'), false);
-    assert.equal(permitted(u('expert'), path, 'POST'), path==='/api/studio/p/publish');
+    assert.equal(permitted(u('expert'), path, 'POST'), false);
     assert.equal(permitted(u('viewer'), path, 'POST'), false);
+    assert.equal(permitted(u('admin'), path, 'POST'), true);
+  }
+  for (const path of ['/api/review/case', '/api/library/p/versions/1.0/activate', '/api/learning/c/r/p/review']) {
     assert.equal(permitted(u('reviewer'), path, 'POST'), true);
   }
   assert.equal(permitted(u('viewer'), '/api/incidents', 'POST'), false);
@@ -101,8 +104,8 @@ test('authenticated author can confirm own knowledge under the default policy', 
   const actor = { id: 'author-id', name: 'Author' };
   r = await studio.change(r.id, 'save', { revision: r.revision, content: r.content, authenticatedActor: actor });
   r = await studio.change(r.id, 'validate', { revision: r.revision, authenticatedActor: actor });
-  r = await studio.change(r.id, 'submit', { revision: r.revision, authenticatedActor: actor });
-  const input = { revision: r.revision, expertConfirmed: true, reviewer: 'Reviewer', notes: 'Reviewed fixture.', authenticatedActor: actor };
+  r = await studio.change(r.id, 'submit', { revision: r.revision, authenticatedActor: actor, authenticatedRoles: ['admin'] });
+  const input = { revision: r.revision, authenticatedActor: actor, authenticatedRoles: ['admin'] };
   const published = await studio.change(r.id, 'publish', input);
   assert.equal(published.releases.at(-1).identityVerified, true); assert.equal(published.releases.at(-1).actorId, 'author-id');
 });

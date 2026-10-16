@@ -625,6 +625,8 @@ button:disabled { opacity: .5; cursor: default; }
 @media (max-width: 700px) { .overview-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .studio-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-bottom: 16px; }
 .studio-reference-field, .studio-reference-helper { grid-column: 1 / -1; }
+.preview-field { display: grid; gap: 6px; min-width: 0; }
+.preview-field textarea, .preview-field input { width: 100%; }
 .studio-reference-helper { display: flex; align-items: end; gap: 8px; min-width: 0; margin-top: -8px; }
 .studio-reference-helper select { min-width: 0; flex: 1; padding: 10px; border: 1px solid var(--line); border-radius: 4px; font: inherit; }
 .studio-reference-helper button { flex: none; }
@@ -743,6 +745,8 @@ a { color: #262626; text-underline-offset: 3px; }
 .context strong { color: #404040; background: #f5f5f5; border-color: var(--line); }
 button.primary, .button.primary { background: #171717; border-color: #171717; color: #ffffff; }
 button.primary:hover, .button.primary:hover { background: #353535; }
+button.danger { background: #fff; border-color: #c5371f; color: #c5371f; }
+button.danger:hover { background: #c5371f; color: #fff; }
 button, .button { border-color: #d4d4d4; }
 button:hover, .button:hover { background: #f5f5f5; }
 .back-link { background: #ffffff; border-color: #a3a3a3; color: #262626; }
@@ -1002,6 +1006,9 @@ input, select, textarea { accent-color: #262626; }
 .pill-create-form .source-choice {border:0;border-top:1px solid var(--line);padding:16px 0;margin:20px 0;}
 .pill-create-form .entry-metadata,.pill-create-form .expert-create-related {padding:12px 0;border-top:1px solid var(--line);margin:16px 0;}
 .pill-create-form .create-submit {margin-top:24px;}
+.pill-content-preview {max-width:1000px;}
+.pill-draft-item {display:grid;grid-template-columns:minmax(0,1fr) 36px;gap:12px;align-items:start;margin-bottom:12px;}
+.pill-draft-item button {width:36px;height:36px;padding:0;}
 .expert-dialogue > p,.expert-examples > p {max-width:76ch;color:var(--muted);}
 
 .pill-step-tabs > span {padding:14px 0;color:var(--muted);opacity:.65;cursor:default;}

@@ -11,7 +11,7 @@ export function syncWorkspaceHeader(root, path, user) {
   if (newPill) newPill.hidden = path !== '/studio' || !user?.roles?.some(role => ['admin', 'expert'].includes(role));
   const heading = root.querySelector('.workspace-heading');
   const source = heading?.querySelector('h2');
-  const text = source?.textContent || (['/overview/analytics', '/studio/analytics'].includes(path) ? 'Operational analytics' : titles[path.split('/')[1]]) || 'Workspace';
+  const text = source?.textContent || titles[path.split('/')[1]] || 'Workspace';
   if (title.textContent !== text) title.textContent = text;
   if (source) {
     source.hidden = true;

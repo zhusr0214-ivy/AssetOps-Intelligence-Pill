@@ -36,8 +36,7 @@ test('retired Settings deep links show the fixed profile and browser back restor
   await new Promise(resolve => setTimeout(resolve, 20));
   assert.equal(document.querySelector('#nav .subnav'), null);
   assert.equal(document.querySelector('#nav [aria-current=page]').getAttribute('href'), '/studio');
-  assert.equal(document.querySelectorAll('#page [data-page-tabs]').length, 1);
-  assert.equal(document.querySelector('#page [data-page-tabs] [aria-current=page]').textContent, 'Knowledge & drafts');
+  assert.equal(document.querySelectorAll('#page [data-page-tabs]').length, 0);
   assert.equal(calls.includes('/api/operations'), false);
   assert.match(document.querySelector('#page').textContent, /Pill Studio/);
   assert.equal(document.querySelector('#page-title').textContent, 'Pill Studio');

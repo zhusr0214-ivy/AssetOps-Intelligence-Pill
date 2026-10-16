@@ -11,17 +11,18 @@ import { createReviewService } from '../review.js';
 import { compareReleases, releaseHash } from '../pill-versions.js';
 import { createHandler } from '../server.js';
 
+const adminRoles = ['admin'], adminActor = { id: 'admin1', name: 'Admin' };
 async function publish(studio, id, modify = () => {}) {
   let r = await studio.get(id);
-  if (r.state === 'published') r = await studio.change(id, 'fork', { revision: r.revision });
+  if (r.state === 'published') r = await studio.change(id, 'fork', { revision: r.revision, authenticatedActor: adminActor, authenticatedRoles: adminRoles });
   const content = structuredClone(r.content);
   content.sources = [{ expert: 'Fixture expert', reference: 'Synthetic source', knowledge: 'Verify readings before making a diagnosis.' }];
   content.examples = [{ scenario: 'Room temperature discrepancy.', rationale: 'Check readings first.', ruleIds: ['HVAC-01'], actionIds: ['check-readings'] }];
   modify(content);
-  r = await studio.change(id, 'save', { revision: r.revision, content });
-  r = await studio.change(id, 'validate', { revision: r.revision }); assert.equal(r.validation.passed, true);
-  r = await studio.change(id, 'submit', { revision: r.revision });
-  return studio.change(id, 'publish', { revision: r.revision, reviewer: 'Reviewer', notes: 'Reviewed synthetic release.', expertConfirmed: true });
+  r = await studio.change(id, 'save', { revision: r.revision, content, authenticatedActor: adminActor, authenticatedRoles: adminRoles });
+  r = await studio.change(id, 'validate', { revision: r.revision, authenticatedActor: adminActor, authenticatedRoles: adminRoles }); assert.equal(r.validation.passed, true);
+  r = await studio.change(id, 'submit', { revision: r.revision, authenticatedActor: adminActor, authenticatedRoles: adminRoles });
+  return studio.change(id, 'publish', { revision: r.revision, authenticatedActor: adminActor, authenticatedRoles: adminRoles });
 }
 async function setup(t) {
   const dir = await mkdtemp(join(tmpdir(), 'versions-')); t.after(() => rm(dir, { recursive: true, force: true }));
@@ -48,9 +49,9 @@ test('published snapshots, checksums, active state and audit survive restart', a
 });
 test('rollback leaves a work-in-progress draft, validation state and release content unchanged', async t => {
   const { studio, body } = await setup(t); let r = await studio.get(ahuPill.id);
-  r = await studio.change(r.id, 'fork', { revision: r.revision }); const content = structuredClone(r.content); content.pill.name = 'Unsaved release draft';
-  r = await studio.change(r.id, 'save', { revision: r.revision, content });
-  r = await studio.change(r.id, 'validate', { revision: r.revision });
+  r = await studio.change(r.id, 'fork', { revision: r.revision, authenticatedActor: adminActor, authenticatedRoles: adminRoles }); const content = structuredClone(r.content); content.pill.name = 'Unsaved release draft';
+  r = await studio.change(r.id, 'save', { revision: r.revision, content, authenticatedActor: adminActor, authenticatedRoles: adminRoles });
+  r = await studio.change(r.id, 'validate', { revision: r.revision, authenticatedActor: adminActor, authenticatedRoles: adminRoles });
   await studio.manageVersion(r.id, '1.0.0', 'activate', await body()); const after = await studio.get(r.id);
   assert.deepEqual(after.content, r.content); assert.deepEqual(after.validation, r.validation); assert.equal(after.state, r.state);
   assert.deepEqual(after.releases.map(v => v.pill), r.releases.map(v => v.pill));
@@ -74,7 +75,7 @@ test('version mutations require explicit confirmation and reject stale or duplic
 });
 test('publication of another Pill invalidates stale library token but keeps one active version per Pill', async t => {
   const { studio, body } = await setup(t), stale = await body();
-  const r = await studio.create({ name: 'Second AHU', owner: 'Expert' });
+  const r = await studio.create({ name: 'Second AHU', authenticatedActor: adminActor, authenticatedRoles: adminRoles });
   await publish(studio, r.id, c => { c.pill = { ...structuredClone(ahuPill), id: r.id, domain: 'ahu_cooling' }; });
   await assert.rejects(studio.manageVersion(ahuPill.id, '1.0.0', 'activate', stale), { status: 409 });
   await studio.manageVersion(ahuPill.id, '1.0.0', 'activate', await body());
@@ -94,7 +95,7 @@ test('comparison aligns rule IDs, ignores object key ordering and exposes change
   await assert.rejects(studio.compareVersions(ahuPill.id, 'missing', '2.0.0'), { status: 404 });
 });
 test('non-AHU published applicability survives restart and is included in version comparison', async t => {
-  const { studio, file } = await setup(t), draft = await studio.create({ name: 'Energy', owner: 'Expert' });
+  const { studio, file } = await setup(t), draft = await studio.create({ name: 'Energy', authenticatedActor: adminActor, authenticatedRoles: adminRoles });
   const scope = { categories: ['energy', 'hvac_cooling'], assetPrefixes: ['AHU-'], keywords: ['energy'] };
   await publish(studio, draft.id, c => { c.pill = { ...structuredClone(ahuPill), id: draft.id, domain: 'energy', applicability: scope }; });
   await publish(studio, draft.id, c => { c.pill.applicability.keywords.push('demand'); });

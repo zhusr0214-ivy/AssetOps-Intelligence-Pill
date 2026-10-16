@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { navigationMarkup, workspaceLinks, selectSubview, pageTabsMarkup, syncPageTabs, removeDuplicateNavigation } from '../public/subpages.js';
-import { editorMarkup } from '../public/studio.js';
+import { previewMarkup } from '../public/pill-preview.js';
 
 const modules = ['overview', 'cases', 'studio', 'library'].map(id => ({ id, title: id }));
 test('case home and conversations have no stage tabs, including legacy links', t => {
@@ -48,8 +48,8 @@ test('sidebar contains only main workspaces; subpages use content tabs', t => {
   assert.equal(root.querySelector('aside a[href="/overview"]'), null);
   assert.equal(root.querySelector('aside a').getAttribute('href'), '/studio');
   assert.equal(root.querySelector('aside [aria-current=page]').getAttribute('href'), '/studio');
-  assert.equal(root.querySelector('main [aria-current=page]').textContent, '2 · Validate recommendations');
-  assert.equal(root.querySelectorAll('main a').length, 3);
+  assert.equal(root.querySelector('main [aria-current=page]'), null);
+  assert.equal(root.querySelectorAll('main a').length, 0);
 });
 
 test('page tabs sit directly after the heading and synchronize without repeated DOM mutations', t => {
@@ -65,11 +65,6 @@ test('page tabs sit directly after the heading and synchronize without repeated 
   assert.equal(tabs.querySelector('[aria-current=page]').textContent, 'Versions & management');
 });
 
-test('operational analytics remains a Studio tab rather than a Pill editor route', () => {
-  const tabs = pageTabsMarkup('/studio/analytics');
-  assert.match(tabs, /href="\/studio\/analytics" aria-current="page"/);
-  assert.doesNotMatch(tabs, /Draft content|Review &amp; publish|\/overview/);
-});
 test('case links preserve incident identity and library links preserve selected version', () => {
   const cases = workspaceLinks('/cases/INC-1/triage');
   assert.deepEqual(cases, []);
@@ -98,26 +93,14 @@ test('subpage changes preserve input values and handlers without rendering a lon
   assert.equal(selectSubview(root, '?view=unknown'), 'draft');
   assert.equal(root.querySelector('[data-page-panel=evaluation]').hidden, true);
 });
-test('draft, publication and history panels remain separate without losing fields', t => {
-  const record = { state: 'in_review', releases: [], events: [], content: { sources: [], examples: [], pill: { name: 'Test', owner: 'Team', source: 'Evidence', scope: 'AHU', rules: [], actions: [], boundaries: [], escalationConditions: [] } } };
-  const dom = new JSDOM(editorMarkup(record)); t.after(() => dom.window.close());
-  const root = dom.window.document;
-  selectSubview(root, '?view=publication');
-  assert.equal(root.querySelector('#pill-editor').hidden, true);
-  assert.equal(root.querySelector('#pill-approval').hidden, false);
-  assert.equal(root.querySelectorAll('[data-page-panel=history]:not([hidden])').length, 0);
-  selectSubview(root, '?view=history');
-  assert.equal(root.querySelectorAll('[data-page-panel=history]:not([hidden])').length, 2);
-  assert.equal(root.querySelector('#pill-editor [name=name]').value, 'Test');
+test('Pill content no longer has separate validation, publication or history panels',t=>{
+ const record={state:'draft',content:{pill:{name:'Test',scope:'Lighting',actions:[],rules:[],boundaries:[],escalationConditions:[]},sources:[],examples:[]}};
+ const dom=new JSDOM(previewMarkup(record));t.after(()=>dom.window.close());
+ assert.equal(dom.window.document.querySelector('[data-page-panel],#pill-editor,#pill-approval'),null);
+ assert.match(dom.window.document.body.textContent,/Lighting/);
 });
-
-test('new Pill shows workflow steps instead of workspace navigation',()=>{
- for(const path of ['/studio/new','/studio/new/upload','/studio/new/expert']){
-  const dom=new JSDOM(pageTabsMarkup(path));const nav=dom.window.document.querySelector('nav');
-  assert.equal(nav.querySelector('[aria-current=step]').textContent,'1 · Prepare knowledge');
-  assert.equal(nav.querySelectorAll('[aria-disabled=true]').length,2);
-  assert.doesNotMatch(nav.textContent,/Knowledge & drafts|Improvement queue|Operational analytics/);
-  assert.equal(nav.querySelectorAll('a').length,1);dom.window.close();
+test('new and existing Pills have no workflow-step tabs',()=>{
+ for(const path of ['/studio/new','/studio/new/upload','/studio/new/expert','/studio/p1']){
+  assert.equal(pageTabsMarkup(path),'');assert.equal(pageTabsMarkup(path,'?view=evaluation'),'');
  }
- assert.match(pageTabsMarkup('/studio/p1','?view=evaluation'),/aria-current="page"/);
 });

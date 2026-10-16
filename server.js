@@ -91,10 +91,12 @@ async function readBody(req) {
     const value = JSON.parse(body);
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid object');
     delete value.authenticatedActor;
+    delete value.authenticatedRoles;
     if (req.authenticatedActor) {
       value.authenticatedActor = req.authenticatedActor;
       value.actor = value.author = value.reviewer = req.authenticatedActor.name;
     }
+    if (req.authenticatedRoles) value.authenticatedRoles = req.authenticatedRoles;
     return value;
   }
   catch { throw Object.assign(new Error('Invalid JSON body.'), { status: 400 }); }
@@ -209,7 +211,12 @@ export function createHandler(store = createIncidentStore(process.env.DATA_FILE 
   if (evaluationMatch && req.method === 'POST') return sendJson(res, 200, { record: await studio.evaluate(evaluationMatch[1], await readBody(req)) });
   const evaluationReview = path.match(/^\/api\/studio\/([^/]+)\/review-evaluation$/);
   if (evaluationReview && req.method === 'POST') return sendJson(res, 200, { record: await studio.reviewEvaluation(evaluationReview[1], await readBody(req)) });
-  const studioMatch = path.match(/^\/api\/studio\/([^/]+)(?:\/(save|validate|submit|publish|return|fork|incorporate-learning|save-evaluations))?$/);
+  const studioDeleteMatch = path.match(/^\/api\/studio\/([^/]+)\/delete$/);
+  if (studioDeleteMatch && req.method === 'POST') {
+    if (!req.authenticatedRoles?.some(role => ['admin', 'expert'].includes(role))) return sendJson(res, 403, { error: 'Only administrators or experts can delete a draft.' });
+    return sendJson(res, 200, await studio.delete(studioDeleteMatch[1], await readBody(req)));
+  }
+  const studioMatch = path.match(/^\/api\/studio\/([^/]+)(?:\/(save|prepare-draft|validate|submit|publish|return|fork|incorporate-learning|save-evaluations))?$/);
   if (studioMatch) {
     if (req.method === 'GET' && !studioMatch[2]) return sendJson(res, 200, { record: await studio.get(studioMatch[1]) });
     if (req.method === 'POST' && studioMatch[2]) return sendJson(res, 200, { record: await studio.change(studioMatch[1], studioMatch[2], await readBody(req)) });

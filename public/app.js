@@ -3,7 +3,6 @@ import { renderLibraryPage } from './library.js';
 import { escapeHtml as e, api } from './incidents.js';
 import { renderStudio } from './studio.js';
 import { renderCaseChat, renderCaseConversations } from './case-chat.js';
-import { renderOperations } from './operations.js';
 import { canonicalPath, caseRoute } from './routes.js';
 import { requireSession, bindAccountIdentity, currentUser } from './session.js';
 import { renderSettings } from './settings.js';
@@ -44,7 +43,6 @@ async function renderRoute() {
       if (route.id || path === '/cases/new') await renderCaseChat(content, route, navigate, path.endsWith('/edit'));
       else await renderCaseConversations(content);
     } else if (path === '/settings') await renderSettings(view);
-    else if (path === '/studio/analytics') { view.innerHTML = '<header class="workspace-heading"><h2>Operational analytics</h2></header><div class="analytics-content"></div>'; await renderOperations(view.querySelector('.analytics-content')); }
     else if (path === '/studio' || path.startsWith('/studio/')) await renderStudio(view, path, navigate);
     else if (path === '/library' || path.startsWith('/library/')) await renderLibraryPage(view, path, window.location.search);
     else throw new Error('Page not found.');

@@ -9,8 +9,8 @@ export function workspaceLinks(path, admin = false) {
     return [];
   }
   if (path.startsWith('/studio')) {
-    const links = [['/studio', 'Knowledge & drafts'], ['/studio/improvements', 'Improvement queue'], ['/studio/analytics', 'Operational analytics']];
-    if (/^\/studio\/[^/]+$/.test(path) && !['/studio/improvements', '/studio/new', '/studio/analytics'].includes(path)) links.push(...[['draft', '1 · Prepare knowledge'], ['evaluation', '2 · Validate recommendations'], ['publication', '3 · Review & release']].map(([key, label]) => [`${path}?view=${key}`, label]));
+    const links = [['/studio', 'Knowledge & drafts']];
+    if (/^\/studio\/[^/]+$/.test(path) && !['/studio/new'].includes(path)) links.push(...[['draft', '1 · Prepare knowledge'], ['evaluation', '2 · Validate recommendations'], ['publication', '3 · Review & release']].map(([key, label]) => [`${path}?view=${key}`, label]));
     return links;
   }
   if (path.startsWith('/library')) {
@@ -33,11 +33,13 @@ export function navigationMarkup(modules, path) {
 
 export function pageTabsMarkup(path, search = '', admin = false) {
   path=canonicalPath(path);
+  if(path==='/studio'||path.startsWith('/studio/'))return '';
+  if (/^\/studio\/[^/]+$/.test(path) && new URLSearchParams(search).get('view') === 'preview') return '';
   if (['/studio/new','/studio/new/upload','/studio/new/expert'].includes(path)) {
     return '<nav class="workspace-tabs pill-step-tabs" data-page-tabs aria-label="Pill creation steps"><a href="/studio/new" aria-current="step">1 · Prepare knowledge</a><span aria-disabled="true">2 · Validate recommendations</span><span aria-disabled="true">3 · Review &amp; release</span></nav>';
   }
   let links = workspaceLinks(path, admin);
-  if (/^\/studio\/[^/]+$/.test(path) && !['/studio/improvements', '/studio/new', '/studio/analytics'].includes(path)) links = links.filter(([href]) => href.includes('?view='));
+  if (/^\/studio\/[^/]+$/.test(path) && !['/studio/new'].includes(path)) links = links.filter(([href]) => href.includes('?view='));
   if (path.startsWith('/library/')) links = links.filter(([href]) => href !== '/library');
   const fallback = path.startsWith('/studio') ? 'draft' : path.startsWith('/library') ? 'content' : 'account';
   const value = new URLSearchParams(search).get('view');

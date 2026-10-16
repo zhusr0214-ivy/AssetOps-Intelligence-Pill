@@ -11,6 +11,7 @@ import { validateSuite, evaluatePill, evaluationGate, evaluationOptions, evaluat
 import { createTriageAgent } from './triage-agent.js';
 import {createExpertInterviewAgent,relatedKnowledge} from './expert-interview.js';
 import {createExpertMethods} from './expert-workflow.js';
+import {applyExtractedDraft, ensureDraftRouting, ensureActionLinks} from './pill-draft.js';
 
 const fail = (message, status = 422) => Object.assign(new Error(message), { status });
 const str = (value, max = 4000) => typeof value === 'string' && value.trim().length > 0 && value.length <= max;
@@ -25,54 +26,34 @@ export function validateDraft(content) {
   const errors = [];
   const check = (ok, message) => { if (!ok) errors.push(message); };
   const pill = content?.pill || {};
-  for (const key of ['name', 'owner', 'source', 'scope']) check(str(pill[key]), `${key} is required (maximum 4000 characters).`);
-  errors.push(...routingErrors(pill));
-  check(array(content?.sources, 20), 'Add at least one expert knowledge source.');
-  for (const source of content?.sources || []) {
-    check(str(source?.expert, 120) && str(source?.reference, 1000) && str(source?.knowledge, 8000), 'Each source needs an expert, reference and captured knowledge.');
-  }
-  check(array(pill.boundaries)&&pill.boundaries.every(v=>str(v,2000)),'boundaries must contain 1-30 nonempty entries.');
-  check(Array.isArray(pill.escalationConditions)&&pill.escalationConditions.length<=30&&pill.escalationConditions.every(v=>str(v,2000)),'escalationConditions must contain 0-30 source-supported nonempty entries.');
-  check(array(pill.rules, 20), 'Add 1-20 decision rules.');
-  check(array(pill.actions, 20), 'Add 1-20 actions.');
-  const rules = Array.isArray(pill.rules) ? pill.rules : [];
-  const actions = Array.isArray(pill.actions) ? pill.actions : [];
-  const ruleIds = ids(rules), actionIds = ids(actions);
-  check(ruleIds.size === rules.length, 'Rule IDs must be unique.');
-  check(actionIds.size === actions.length, 'Action IDs must be unique.');
-  for (const rule of rules) {
-    check(identifier(rule?.id) && str(rule?.title, 200) && str(rule?.guidance, 2000) && str(rule?.cardExplanation, 2000), 'Each rule needs an ID, title, explanation and guidance.');
-    check(array(rule?.actionIds, 20) && rule.actionIds.every(id => actionIds.has(id)), `Rule ${rule?.id || '?'} has missing or invalid action references.`);
-  }
-  for (const action of actions) {
-    if (action.coordinationKey || action.coordinationValue) check(str(action.coordinationKey, 120) && str(action.coordinationValue, 120), 'Coordination key and value must both be present (maximum 120 characters).');
-    check(identifier(action?.id) && str(action?.title, 200) && str(action?.instruction, 2000) && str(action?.owner, 120) && typeof action?.requiresApproval === 'boolean', 'Each action needs an ID, title, instruction, owner and approval flag.');
-    check(array(action?.ruleIds, 20) && action.ruleIds.every(id => ruleIds.has(id)), `Action ${action?.id || '?'} has missing or invalid rule references.`);
-    for (const ruleId of action?.ruleIds || []) check(rules.find(r => r.id === ruleId)?.actionIds?.includes(action.id), `Action ${action.id} and rule ${ruleId} must reference each other.`);
-  }
-  for (const rule of rules) for (const actionId of rule?.actionIds || []) check(actions.find(a => a.id === actionId)?.ruleIds?.includes(rule.id), `Rule ${rule.id} and action ${actionId} must reference each other.`);
-  check(array(content?.examples, 20), 'Add at least one example with expected rules and actions.');
-  for (const example of content?.examples || []) {
-    check(str(example?.scenario, 4000) && str(example?.rationale, 4000), 'Each example needs a scenario and expert rationale.');
-    check(array(example?.ruleIds, 20) && example.ruleIds.every(id => ruleIds.has(id)), 'Example references an unknown rule.');
-    check(array(example?.actionIds, 20) && example.actionIds.every(id => actionIds.has(id) && actions.find(a => a.id === id)?.ruleIds?.some(r => example.ruleIds?.includes(r))), 'Example actions must link to its expected rules.');
-  }
-  return { passed: errors.length === 0, errors: [...new Set(errors)], checkedAt: new Date().toISOString(), scope: 'Structure, references and example consistency. Expert review is required for engineering correctness.' };
+  check(str(pill.name, 4000), 'name is required (maximum 4000 characters).');
+  check(str(pill.scope, 4000), 'scope is required before publishing. Extract knowledge from sources first.');
+  check(Array.isArray(pill.actions) && pill.actions.length > 0 && pill.actions.every(a=>str(a?.instruction,2000)), 'At least one valid action is required; action text cannot be empty.');
+  return { passed: errors.length === 0, errors: [...new Set(errors)], checkedAt: new Date().toISOString(), scope: 'Pill name, scope and actions are required.' };
 }
 
 function contentFrom(body, id) {
   if (!body || typeof body !== 'object' || !body.pill || typeof body.pill !== 'object') throw fail('Pill content is required.');
-  for (const key of ['sources', 'examples']) if (!Array.isArray(body[key]) || body[key].length > 20 || body[key].some(v => !v || typeof v !== 'object' || Array.isArray(v))) throw fail(`Invalid ${key}.`);
-  for (const key of ['rules', 'actions', 'boundaries', 'escalationConditions']) if (!Array.isArray(body.pill[key]) || body.pill[key].length > 30) throw fail(`Invalid ${key}.`);
-  for (const rule of body.pill.rules) if (!rule || !Array.isArray(rule.actionIds)) throw fail('Invalid rule.');
-  for (const action of body.pill.actions) if (!action || !Array.isArray(action.ruleIds)) throw fail('Invalid action.');
-  for (const example of body.examples) if (!Array.isArray(example.ruleIds) || !Array.isArray(example.actionIds)) throw fail('Invalid example.');
+  const sources = Array.isArray(body.sources) ? body.sources.filter(v => v && typeof v === 'object' && !Array.isArray(v)).slice(0, 20) : [];
+  const examples = Array.isArray(body.examples) ? body.examples.filter(v => v && typeof v === 'object' && !Array.isArray(v)).slice(0, 20) : [];
+  const rules = Array.isArray(body.pill.rules) ? body.pill.rules.slice(0, 30) : [];
+  const actions = Array.isArray(body.pill.actions) ? body.pill.actions.slice(0, 30) : [];
+  const boundaries = Array.isArray(body.pill.boundaries) ? body.pill.boundaries.slice(0, 30) : [];
+  const escalationConditions = Array.isArray(body.pill.escalationConditions) ? body.pill.escalationConditions.slice(0, 30) : [];
+  for(const [kind,values] of [['rule',rules],['action',actions]]) {
+    if(values.some(v=>!v||typeof v!=='object'||Array.isArray(v)))throw fail(`Invalid ${kind}.`);
+    if(new Set(values.map(v=>v.id)).size!==values.length||values.some(v=>!identifier(v.id)))throw fail(`Each ${kind} needs a unique ID.`);
+    for(const value of values){
+      const links=kind==='rule'?'actionIds':'ruleIds';
+      if(!Array.isArray(value[links])||value[links].some(id=>typeof id!=='string'))throw fail(`Invalid ${kind} references.`);
+      if(kind==='action'&&(typeof value.instruction!=='string'||value.instruction.length>2000||typeof value.requiresApproval!=='boolean'))throw fail('Invalid action text or approval flag.');
+    }
+  }
+  if([...boundaries,...escalationConditions].some(v=>typeof v!=='string'||v.length>2000))throw fail('Invalid operating limits.');
   if (JSON.stringify(body).length > 80000) throw fail('Draft is too large.');
-  // Only authorable fields enter a draft; publication metadata is server-owned.
   const pick = (value, keys) => Object.fromEntries(keys.map(key => [key, value[key] ?? '']));
   const applicability = body.pill.applicability;
-  if (applicability !== undefined && routingErrors({ ...body.pill, domain: body.pill.domain || 'ahu_cooling' }).length) throw fail('Invalid routing criteria. Select categories and valid asset prefixes/keywords.');
-  return { pill: { id, ...pick(body.pill, ['name', 'owner', 'source', 'scope', 'domain']), ...(applicability ? { applicability: structuredClone(applicability) } : {}), rules: body.pill.rules.map(r => pick(r, ['id', 'title', 'guidance', 'cardExplanation', 'actionIds'])), actions: body.pill.actions.map(a => ({ ...pick(a, ['id', 'title', 'instruction', 'owner', 'requiresApproval', 'ruleIds']), ...(a.coordinationKey || a.coordinationValue ? pick(a, ['coordinationKey', 'coordinationValue']) : {}) })), boundaries: body.pill.boundaries, escalationConditions: body.pill.escalationConditions }, sources: body.sources.map(s => pick(s, ['expert', 'reference', 'knowledge'])), examples: body.examples.map(s => pick(s, ['scenario', 'rationale', 'ruleIds', 'actionIds'])) };
+  return { pill: { id, ...pick(body.pill, ['name', 'owner', 'source', 'scope', 'domain']), ...(applicability ? { applicability: structuredClone(applicability) } : {}), rules: rules.map(r => pick(r, ['id', 'title', 'guidance', 'cardExplanation', 'actionIds'])), actions: actions.map(a => ({ ...pick(a, ['id', 'title', 'instruction', 'owner', 'requiresApproval', 'ruleIds']), ...(a.coordinationKey || a.coordinationValue ? pick(a, ['coordinationKey', 'coordinationValue']) : {}) })), boundaries, escalationConditions }, sources: sources.map(s => pick(s, ['expert', 'reference', 'knowledge'])), examples: examples.map(s => pick(s, ['scenario', 'rationale', 'ruleIds', 'actionIds'])) };
 }
 
 export function createPillStudio(file, { captureAgent = createKnowledgeCaptureAgent(), parser = extractDocument, evaluationAgent = createTriageAgent(), interviewAgent = createExpertInterviewAgent(), persistence } = {}) {
@@ -185,7 +166,7 @@ export function createPillStudio(file, { captureAgent = createKnowledgeCaptureAg
           const id = `pill-${randomUUID().slice(0, 8)}`;
           const category = input.facts.category || 'other';
           const domain = ['hvac', 'hvac_cooling'].includes(category) ? 'ahu_cooling' : category === 'other' ? 'asset_operations' : category;
-          record = { id, revision: 0, state: 'draft', content: { pill: { id, name: `${input.facts.title || 'Case'} - expert knowledge`.slice(0, 200), owner: input.actor.name, source: input.caseId, scope: input.applicability, domain, applicability: { categories: [category], assetPrefixes: [], keywords: [] }, rules: [], actions: [], boundaries: ['Advisory only. Expert proposals are not evidence of execution.'], escalationConditions: [] }, sources: [], examples: [] }, releases: [], events: [], validation: null };
+          record = { id, revision: 0, state: 'draft', content: { pill: { id, name: `${input.facts.title || 'Case'} - expert knowledge`.slice(0, 200), owner: input.actor.name, source: '', scope: input.applicability || '', domain, applicability: { categories: [category], assetPrefixes: [], keywords: [] }, rules: [], actions: [], boundaries: [], escalationConditions: [] }, sources: [], examples: [] }, releases: [], events: [], validation: null };
           records.push(record);
         }
         if (record.content.sources.length >= 20) throw fail('The target draft has reached its knowledge source limit.');
@@ -216,9 +197,9 @@ export function createPillStudio(file, { captureAgent = createKnowledgeCaptureAg
         } else {
           const facts = JSON.parse(snapshot.blocks.find(b => b.id === 'case').text);
           const domain = facts.category === 'hvac' || facts.category === 'hvac_cooling' ? 'ahu_cooling' : facts.category === 'other' ? 'asset_operations' : facts.category;
-          if (!str(body?.name, 200) || !str(body?.owner, 120)) throw fail('New Pill name and owner are required.');
+          if (!str(body?.name, 200)) throw fail('New Pill name is required.');
           const id = `pill-${randomUUID().slice(0, 8)}`;
-          record = { id, revision: 0, state: 'draft', content: { pill: { id, name: body.name.trim(), owner: body.owner.trim(), source: '', scope: '', domain, applicability: { categories: [facts.category], assetPrefixes: [], keywords: [] }, rules: [], actions: [], boundaries: ['Advisory only. No automatic equipment commands.'], escalationConditions: [] }, sources: [], examples: [] }, releases: [], events: [], validation: null };
+          record = { id, revision: 0, state: 'draft', content: { pill: { id, name: body.name.trim(), owner: body.authenticatedActor?.name || '', source: '', scope: '', domain, applicability: { categories: [facts.category], assetPrefixes: [], keywords: [] }, rules: [], actions: [], boundaries: [], escalationConditions: [] }, sources: [], examples: [] }, releases: [], events: [], validation: null };
           records.push(record);
         }
         if (record.content.sources.length >= 20) throw fail('This draft has reached its source limit.');
@@ -307,6 +288,7 @@ export function createPillStudio(file, { captureAgent = createKnowledgeCaptureAg
           }
           delete doc.captureDiagnostic; delete doc.captureProgress; delete doc.partialCandidates;
           Object.assign(doc, result, { status: 'extracted', analyzedAt: new Date().toISOString() }); record.revision++;
+          if(record.simpleFlow)applyExtractedDraft(record);
           record.state = 'draft'; record.validation = null;
           record.events.push({ action: 'source_extracted', documentId, revision: record.revision, at: doc.analyzedAt });
           return record;
@@ -349,13 +331,37 @@ export function createPillStudio(file, { captureAgent = createKnowledgeCaptureAg
         return record;
       });
     },
+    delete(id, body) {
+      return mutate(records => {
+        const index = records.findIndex(r => r.id === id);
+        if (index === -1) throw fail('Pill not found.', 404);
+        if (records[index].state === 'published') throw fail('Published Pills cannot be deleted. Create a new draft instead.', 409);
+        if (!Number.isInteger(body?.revision) || body.revision !== records[index].revision) throw fail('Pill changed. Reload before continuing.', 409);
+        const record=records[index];
+        if(record.documents?.some(d=>running.has(`${id}/${d.id}`)) || persistence?.isLeased(`studio:analyze:${id}`))throw fail('Wait for extraction to finish before deleting the draft.',409);
+        if(record.releases.length){
+          const release=record.releases.find(r=>r.active)||record.releases.at(-1);
+          record.content={pill:structuredClone(release.pill),sources:structuredClone(release.sources||[]),examples:structuredClone(release.examples||[])};
+          delete record.content.pill.status;delete record.content.pill.version;
+          record.documents=record.draftBase?.documents||[];
+          record.captureHistory=structuredClone(release.captureHistory||[]);
+          record.learningImports=structuredClone(release.learningImports||[]);
+          record.state='published';record.validation=structuredClone(release.validation||null);
+          delete record.draftBase;record.revision++;
+          record.events.push({action:'draft_discarded',at:new Date().toISOString(),actorId:body.authenticatedActor?.id});
+          return {id,deleted:true,preservedReleases:true};
+        }
+        records.splice(index, 1);
+        return { id, deleted: true };
+      });
+    },
     create(body) {
       return mutate(records => {
-        if (!str(body?.name, 200) || !str(body?.owner, 120)) throw fail('Name and owner are required.');
+        if (!str(body?.name, 200)) throw fail('Name is required.');
         const id = `pill-${randomUUID().slice(0, 8)}`;
-        const domains = {ahu_cooling:'hvac_cooling',hvac_local_comfort:'hvac_local_comfort',energy:'energy',electrical_distribution:'electrical_distribution',water_leak:'water_leak',lift_fault:'lift_fault',asset_operations:'other'};
-        const domain = body.domain || 'ahu_cooling'; if (!domains[domain]) throw fail('Choose a supported domain.');
-        const record = { id, revision: 0, state: 'draft', content: { pill: { id, name: body.name.trim(), owner: body.owner.trim(), source: '', scope: '', domain, ...(body.domain ? {applicability:{categories:[domains[domain]],assetPrefixes:[],keywords:[]}} : {}), rules: [], actions: [], boundaries: ['Advisory only. No equipment commands or work orders.'], escalationConditions: [] }, sources: [], examples: [] }, releases: [], events: [{ action: 'created', at: new Date().toISOString() }], validation: null };
+        const owner = body.authenticatedActor?.name || '';
+        const record = { id, revision: 0, state: 'draft', content: { pill: { id, name: body.name.trim(), owner, source: '', scope: '', domain: '', rules: [], actions: [], boundaries: [], escalationConditions: [] }, sources: [], examples: [] }, releases: [], events: [{ action: 'created', at: new Date().toISOString() }], validation: null };
+        record.simpleFlow=true;
         record.contributorIds = body.authenticatedActor ? [body.authenticatedActor.id] : [];
         records.push(record); return record;
       });
@@ -368,18 +374,15 @@ export function createPillStudio(file, { captureAgent = createKnowledgeCaptureAg
         let activation;
         if (operation === 'fork') {
           if (record.state !== 'published') throw fail('An editable draft already exists.', 409);
+          record.draftBase={documents:structuredClone(record.documents||[])};
           record.state = 'draft'; record.validation = null;
           record.contributorIds = [];
         } else {
           if (record.state === 'published') throw fail('Create a new draft before editing a published Pill.', 409);
-          if(['submit','publish'].includes(operation)&&record.expertDialogue?.messages.some(m=>m.text)&&!record.expertDialogue.documentId)throw fail('Confirm the pending expert discussion as a source and review its knowledge before release.',409);
-          if(['submit','publish'].includes(operation)&&record.expertAttempt)throw fail('Re-run the saved example before release; its analysis has not completed.',409);
-          if(['submit','publish'].includes(operation)&&record.documents?.some(d=>d.captureCompleteness==='partial'))throw fail('Complete the pending source extraction before release. Retained drafts are not completed knowledge.',409);
-          if(['submit','publish'].includes(operation)&&record.expertFeedback?.some(f=>f.status==='pending_report_fix'))throw fail('Re-run and confirm examples with pending report-only corrections before release.',409);
-          if(['submit','publish'].includes(operation)&&record.expertFeedback?.some(f=>f.status==='pending_knowledge_review'))throw fail('Review the pending expert corrections in Prepare knowledge before release.',409);
           if (['validate', 'submit', 'publish'].includes(operation) && record.documents?.some(d => running.has(`${id}/${d.id}`))) throw fail('Wait for knowledge extraction to finish before validating or publishing.', 409);
           if (['validate', 'submit', 'publish'].includes(operation) && persistence?.isLeased(`studio:analyze:${id}`)) throw fail('Knowledge extraction is running on another instance.', 409);
-          if (operation === 'save-evaluations') {
+          if(operation==='prepare-draft') {applyExtractedDraft(record);record.simpleFlow=true;}
+          else if (operation === 'save-evaluations') {
             if (body.content) { record.content = contentFrom(body.content, id); invalidateLearning(record); }
             record.evaluationSuite = validateSuite(body.suite, {allowIncomplete:body.draftOnly === true}); record.evaluationRequired = true;
             if (body.sharedExamples === true) record.content.examples = record.evaluationSuite.filter(t=>t.expected.status==='complete' && t.name && t.expected.ruleIds.length).map(t=>({scenario:[t.facts.description,t.facts.observations].filter(Boolean).join('\n'),rationale:t.expected.workflow?.steps || `User-defined test expectation: ${t.name}; expected rules ${t.expected.ruleIds.join(', ')} and actions ${t.expected.actionIds.join(', ')}.`,ruleIds:t.expected.ruleIds,actionIds:t.expected.actionIds}));
@@ -395,50 +398,42 @@ export function createPillStudio(file, { captureAgent = createKnowledgeCaptureAg
             record.state = 'draft'; record.validation = null;
           }
           else if (operation === 'save') { record.content = contentFrom(body.content, id); record.state = 'draft'; record.validation = null;
+            ensureDraftRouting(record.content.pill);
             invalidateLearning(record);
             if(body.autoValidate) {record.validation=validateDraft(record.content);record.state=record.validation.passed?'validated':'draft';}
           }
           else if (operation === 'validate') { record.validation = validateDraft(record.content); record.state = record.validation.passed ? 'validated' : 'draft'; }
           else if (operation === 'submit') {
-            if(record.documents?.some(d=>d.status!=='reviewed'))throw fail('Review the pending source proposals before submitting the knowledge.',409);
+            if (!Array.isArray(body.authenticatedRoles) || !body.authenticatedRoles.includes('admin')) throw fail('Only administrators can submit a Pill for review.', 403);
             if(body.autoValidate) {record.validation=validateDraft(record.content);if(record.validation.passed) record.state='validated';}
-            if(record.evaluationRequired) {
+            if (record.state !== 'validated' || !record.validation?.passed) { record.validation = validateDraft(record.content); record.state = record.validation.passed ? 'validated' : 'draft'; }
+            if (!record.validation?.passed) throw fail('Complete the draft before submitting.');
+            if (record.evaluationRequired) {
               const gate=evaluationGate(record);
               if(!record.evaluations?.at(-1)?.passed || ['not_run','outdated','failed','not_enabled'].includes(gate.state)) throw fail('Run a successful evaluation of the current knowledge before submitting for review.',409);
             }
-            if (record.state !== 'validated' || !record.validation?.passed) throw fail('Complete the draft and test examples before submitting.');
             record.state = 'in_review';
           } else if (operation === 'return') {
-            if (record.state !== 'in_review' || !str(body.notes, 3000) || !str(body.reviewer, 120)) throw fail('Reviewer and return reason are required for a draft in review.');
+            if (!Array.isArray(body.authenticatedRoles) || !body.authenticatedRoles.includes('admin')) throw fail('Only administrators can return a pill.', 403);
             record.state = 'draft'; record.validation = null;
-          } else if (operation === 'publish') {
-            if (record.independentReviewRequired && body.authenticatedActor && record.contributorIds?.includes(body.authenticatedActor.id)) throw fail('A different reviewer must publish this draft. Authors cannot approve their own changes.', 403);
+          }           else if (operation === 'publish') {
+            if (!Array.isArray(body.authenticatedRoles) || !body.authenticatedRoles.includes('admin')) throw fail('Only administrators can publish a Pill.', 403);
             if (evaluating.has(id)) throw fail('Wait for evaluation to finish before publishing.', 409);
             if (persistence?.isLeased(`studio:evaluate:${id}`)) throw fail('Evaluation is running on another instance.', 409);
-            if(body.evaluationReview && record.evaluationRequired) {
-              const run=record.evaluations?.at(-1), review=body.evaluationReview;
-              const baseline=record.releases.find(r=>r.active&&!r.disabled)?.pill||null;
-              if(!run || run.id!==review.runId || run.key!==evaluationKey(record,baseline) || !run.passed) throw fail('Current successful evaluation is required for combined approval.',409);
-              if(!body.authenticatedActor?.id || record.independentReviewRequired && run.requestedBy===body.authenticatedActor.id) throw fail('A different reviewer must assess this evaluation.',403);
-              if(!run.expertReview) {
-                if(!['scope','limitations','qualification','reference','notes'].every(k=>str(review[k],2000)) || review.confirmed!==true) throw fail('Complete the evaluation review and confirm the operating limits.');
-                run.expertReview={decision:'accepted',...Object.fromEntries(['scope','limitations','qualification','reference','notes'].map(k=>[k,review[k].trim()])),actorId:body.authenticatedActor.id,reviewer:body.authenticatedActor.name,identityVerified:true,credentialsIndependentlyVerified:false,certification:false,at:now,key:run.key};
-                record.events.push({action:'evaluation_review',runId:run.id,actorId:body.authenticatedActor.id,decision:'accepted',at:now});
-              }
-            }
-            if (evaluationGate(record).required && !evaluationGate(record).passed) throw fail('The current draft must pass its configured model evaluation before publication.');
-            if (record.learningImports?.some(v => v.status === 'pending_incorporation')) throw fail('Confirm how imported learning was incorporated into rules and validation cases before publishing.');
-            if (record.state !== 'in_review' || !validateDraft(record.content).passed) throw fail('Submit a valid draft for review before publishing.');
-            if (!str(body.reviewer, 120) || !str(body.notes, 3000) || body.expertConfirmed !== true) throw fail('Reviewer, approval notes and expert confirmation are required.');
+            ensureDraftRouting(record.content.pill);
+            record.validation = validateDraft(record.content);
+            if (!record.validation.passed) throw fail(record.validation.errors[0] || 'Complete the draft before publishing.');
+            ensureActionLinks(record.content.pill);
             const pill = { ...structuredClone(record.content.pill), status: 'approved', version: `${record.releases.length + 1}.0.0` };
             const previous = record.releases.find(v => v.active);
             activation = { target: { id, version: pill.version }, previous: previous ? { id: previous.pill.id, version: previous.pill.version } : null };
             for (const release of record.releases) release.active = false;
             for (const item of record.learningImports || []) if (!item.releasedVersion) item.releasedVersion = pill.version;
-            record.releases.push({ pill, sources: structuredClone(record.content.sources), examples: structuredClone(record.content.examples), learningImports: structuredClone(record.learningImports || []), captureHistory: structuredClone(record.captureHistory || []), ...(record.expertFeedback?.length?{expertFeedback:structuredClone(record.expertFeedback),expertTrials:structuredClone(record.expertTrials||[])}:{}), validation: structuredClone(record.validation), reviewer: body.reviewer.trim(), independentReviewRequired:Boolean(record.independentReviewRequired), identityVerified: Boolean(body.authenticatedActor), actorId: body.authenticatedActor?.id || null, notes: body.notes.trim(), publishedAt: now, active: true });
-            record.releases.at(-1).evaluation = record.evaluationRequired ? structuredClone(record.evaluations.at(-1)) : { state: 'not_enabled' };
+            record.releases.push({ pill, sources: structuredClone(record.content.sources), examples: structuredClone(record.content.examples), learningImports: structuredClone(record.learningImports || []), captureHistory: structuredClone(record.captureHistory || []), ...(record.expertFeedback?.length?{expertFeedback:structuredClone(record.expertFeedback),expertTrials:structuredClone(record.expertTrials||[])}:{}), validation: structuredClone(record.validation), reviewer: body.authenticatedActor?.name || '', identityVerified: Boolean(body.authenticatedActor), actorId: body.authenticatedActor?.id || null, publishedAt: now, active: true });
+            record.releases.at(-1).evaluation = record.evaluations?.length ? {...structuredClone(record.evaluations.at(-1)),usedAsReleaseGate:false} : {state:'not_required',method:'admin_direct_publication'};
             record.releases.at(-1).contentHash = releaseHash(record.releases.at(-1));
             record.state = 'published';
+            delete record.draftBase;
           } else throw fail('Unknown Studio operation.', 404);
         }
         record.revision++; record.updatedAt = now;

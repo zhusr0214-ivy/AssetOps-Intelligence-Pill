@@ -1,4 +1,5 @@
 import { escapeHtml as e, api } from './incidents.js';
+import {currentUser} from './session.js';
 
 export function pillMarkup(pill, {captureHistory=[]}={}) {
   const anchor=value=>encodeURIComponent(`${pill.id}${pill.status==='approved'?`-${pill.version}`:''}-${value}`);
@@ -35,7 +36,7 @@ export function renderLibrary(root, pills) {
     const groups = [...new Set(pills.map(p => p.id))].map(id => pills.filter(p => p.id === id));
     const matches = groups.filter(versions => filterPills(versions, input.value).length);
     root.querySelector('.result-count').textContent = `${matches.length} of ${groups.length} Pills`;
-    root.querySelector('.pill-library').innerHTML = matches.length ? `<div class="table-scroll"><table class="incident-table"><thead><tr><th>Pill</th><th>Active version</th><th>Latest release</th><th>Owner</th><th>Published</th><th>Versions</th></tr></thead><tbody>${matches.map(versions => { const latest = versions.at(-1), active = versions.find(p => p.active); return `<tr><td><a href="/library/${e(latest.id)}">${e(latest.name)}</a><small>${e(latest.id)}</small></td><td>${e(active?.version || 'Not active')}</td><td>${e(latest.version)}${latest.disabled ? ' / Disabled' : ''}</td><td>${e(latest.owner)}</td><td>${e(latest.publishedAt)}</td><td>${versions.length}</td></tr>`; }).join('')}</tbody></table></div>` : '<p class="empty-state">No approved Pills match this view. Drafts and improvement candidates are in Pill Studio.</p>';
+    root.querySelector('.pill-library').innerHTML = matches.length ? `<div class="table-scroll"><table class="incident-table"><thead><tr><th>Pill</th><th>Active version</th><th>Latest release</th><th>Owner</th><th>Published</th></tr></thead><tbody>${matches.map(versions => { const latest = versions.at(-1), active = versions.find(p => p.active); return `<tr><td><a href="/library/${e(latest.id)}">${e(latest.name)}</a><small>${e(latest.id)}</small></td><td>${e(active?.version || 'Not active')}</td><td>${e(latest.version)}${latest.disabled ? ' / Disabled' : ''}</td><td>${e(latest.owner)}</td><td>${e(latest.publishedAt)}</td></tr>`; }).join('')}</tbody></table></div>` : '<p class="empty-state">No approved Pills match this view. Drafts and improvement candidates are in Pill Studio.</p>';
   };
   input.addEventListener('input', update); update();
 }
@@ -62,7 +63,7 @@ export async function renderLibraryPage(root, path, search = '') {
   if (!root.isConnected) return;
   const selected = version ? data.releases.find(v => v.pill.version === version) : data.releases.find(v => v.active) || data.releases.at(-1);
   if (!selected) throw new Error('Published version not found.');
-  root.innerHTML = `<a class="back-link" href="/library">&larr; Pill Library</a><header class="workspace-heading"><div><h2>${e(selected.pill.name)}</h2><p>Published knowledge · version ${e(selected.pill.version)}</p></div><a class="button" href="/studio/${e(id)}">Review or revise in Studio</a></header><nav class="workspace-tabs" aria-label="Pill views"><a href="/library/${e(id)}" ${section !== 'compare' ? 'aria-current="page"' : ''}>Versions and content</a><a href="/library/${e(id)}/compare" ${section === 'compare' ? 'aria-current="page"' : ''}>Compare versions</a></nav><p data-page-panel="versions">Active version: ${data.active ? `v${e(data.active.version)}` : 'None'}</p><p class="form-error" role="alert" hidden></p><div class="library-detail"></div>`;
+  root.innerHTML = `<a class="back-link" href="/library">&larr; Pill Library</a><header class="workspace-heading"><div><h2>${e(selected.pill.name)}</h2><p>Published knowledge · version ${e(selected.pill.version)}</p></div>${currentUser()?.roles?.some(r=>['admin','expert'].includes(r)) ? `<a class="button" href="/studio/${e(id)}?edit=1">Edit</a>` : ''}</header><nav class="workspace-tabs" aria-label="Pill views"><a href="/library/${e(id)}" ${section !== 'compare' ? 'aria-current="page"' : ''}>Versions and content</a><a href="/library/${e(id)}/compare" ${section === 'compare' ? 'aria-current="page"' : ''}>Compare versions</a></nav><p data-page-panel="versions">Active version: ${data.active ? `v${e(data.active.version)}` : 'None'}</p><p class="form-error" role="alert" hidden></p><div class="library-detail"></div>`;
   const detail = root.querySelector('.library-detail');
   if (section === 'compare') {
     const params = new URLSearchParams(search), latest = data.releases.at(-1).pill.version;
