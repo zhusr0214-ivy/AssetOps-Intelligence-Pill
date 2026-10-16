@@ -12,6 +12,7 @@ import { createTriageAgent } from './triage-agent.js';
 import {createExpertInterviewAgent,relatedKnowledge} from './expert-interview.js';
 import {createExpertMethods} from './expert-workflow.js';
 import {applyExtractedDraft, ensureDraftRouting, ensureActionLinks} from './pill-draft.js';
+import {createBatchPublisher} from './pill-batch.js';
 
 const fail = (message, status = 422) => Object.assign(new Error(message), { status });
 const str = (value, max = 4000) => typeof value === 'string' && value.trim().length > 0 && value.length <= max;
@@ -29,7 +30,8 @@ export function validateDraft(content) {
   check(str(pill.name, 4000), 'name is required (maximum 4000 characters).');
   check(str(pill.scope, 4000), 'scope is required before publishing. Extract knowledge from sources first.');
   check(Array.isArray(pill.actions) && pill.actions.length > 0 && pill.actions.every(a=>str(a?.instruction,2000)), 'At least one valid action is required; action text cannot be empty.');
-  return { passed: errors.length === 0, errors: [...new Set(errors)], checkedAt: new Date().toISOString(), scope: 'Pill name, scope and actions are required.' };
+  check(Array.isArray(pill.rules) && pill.rules.length > 0 && pill.rules.every(r=>str(r?.guidance,2000)), 'At least one valid decision rule is required; decision rule text cannot be empty.');
+  return { passed: errors.length === 0, errors: [...new Set(errors)], checkedAt: new Date().toISOString(), scope: 'Pill name, scope, actions and decision rules are required.' };
 }
 
 function contentFrom(body, id) {
@@ -76,6 +78,7 @@ export function createPillStudio(file, { captureAgent = createKnowledgeCaptureAg
   };
   const service = {
     list,
+    publishImprovementBatch:createBatchPublisher({mutate,contentFrom,validateDraft,running,evaluating,persistence}),
     reviewEvaluation(id, body) {
       return mutate(records => {
         const record = find(records, id, body?.revision), run = record.evaluations?.at(-1);

@@ -174,7 +174,9 @@ body {
 .case-chat-tool > summary, .feedback-detail > summary { cursor: pointer; font-weight: 600; }
 .case-chat-tool[open] > summary, .feedback-detail[open] > summary { margin-bottom: 20px; }
 .case-chat-tool form, .expert-solution form { display: grid; gap: 14px; }
-.case-chat-tool article, .expert-saved { padding-block: 14px; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+.case-chat-tool article, .expert-saved { padding-block: 14px; overflow-wrap: anywhere; }
+.case-chat-tool article + article, .case-chat-tool [data-confirmation-body] > article:last-child { border-top: 1px solid var(--line); }
+.case-chat-tool [data-confirmation-body] > article:first-child { border-top: 0; }
 .case-chat-tool small, .expert-saved small { display: block; color: var(--muted); }
 .case-chat-tool dl { display: grid; gap: 8px; }
 .case-chat-tool dd { margin: 0 0 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -601,6 +603,12 @@ button:disabled { opacity: .5; cursor: default; }
 .workspace-tabs { display: flex; flex-wrap: wrap; gap: 4px 24px; border-bottom: 1px solid var(--line); margin: 0 0 24px; }
 .evaluation-panel label { display: grid; gap: 6px; margin: 12px 0; min-width: 0; }
 .operations-filters label { display: grid; gap: 6px; margin: 12px 0; min-width: 0; }
+.studio-filters { display: grid; grid-template-columns: minmax(0, 2fr) repeat(2, minmax(0, 1fr)); gap: 16px; align-items: end; }
+.studio-table th:nth-child(1) {width:44%;}
+.studio-table th:nth-child(2) {width:18%;}
+.studio-table th:nth-child(3) {width:14%;}
+.studio-table th:nth-child(4) {width:24%;}
+.studio-table td small {display:block;margin-top:6px;}
 .operations-filters input, .operations-filters select { width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid var(--line); border-radius: 4px; font: inherit; }
 .evaluation-panel input, .evaluation-panel textarea, .evaluation-panel select { width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid var(--line); border-radius: 4px; font: inherit; }
 .operational-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
@@ -1006,9 +1014,50 @@ input, select, textarea { accent-color: #262626; }
 .pill-create-form .source-choice {border:0;border-top:1px solid var(--line);padding:16px 0;margin:20px 0;}
 .pill-create-form .entry-metadata,.pill-create-form .expert-create-related {padding:12px 0;border-top:1px solid var(--line);margin:16px 0;}
 .pill-create-form .create-submit {margin-top:24px;}
-.pill-content-preview {max-width:1000px;}
+.pill-content-preview {max-width:1000px;display:grid;gap:28px;}
+.pill-content-preview > .triage-section {border:0;margin:0;padding:0;min-width:0;}
+.pill-content-preview > label {margin:0;min-width:0;}
+.pill-content-preview .triage-section h3 {margin:0 0 10px;}
+.pill-content-preview .triage-section p {margin:0 0 10px;}
+.pill-content-preview .triage-section p:last-child {margin-bottom:0;}
+.pill-content-preview + [data-preview-status] {margin-top:24px;}
+.pill-field-heading {display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:10px;}
+.pill-content-preview .pill-field-heading h3 {margin:0;}
+.pill-draft-editor {max-width:880px;gap:30px;}
+.pill-draft-editor > label {display:grid;gap:10px;font-size:15px;font-weight:600;line-height:1.5;}
+.pill-draft-editor .triage-section h3 {font-size:15px;font-weight:600;}
+.pill-draft-editor input,.pill-draft-editor textarea {box-sizing:border-box;width:100%;min-width:0;margin:0;padding:12px 14px;border:1px solid #d4d4d4;border-radius:4px;background:#fafafa;color:#171717;font-size:14px;font-weight:400;line-height:1.65;}
+.pill-draft-editor input {height:46px;}
+.pill-draft-editor textarea {min-height:112px;resize:vertical;}
+.pill-draft-editor input:focus,.pill-draft-editor textarea:focus {background:#fff;border-color:#525252;outline:2px solid #d4d4d4;outline-offset:2px;}
+.pill-draft-editor .pill-item-add {width:32px;height:32px;min-height:32px;padding:0;border-color:#dedede;border-radius:4px;font-size:22px;line-height:1;}
+.pill-preview-actions {max-width:1000px;gap:10px;margin:28px 0 16px;}
+.pill-draft-editor ~ .pill-preview-actions {max-width:880px;}
+.pill-preview-actions [data-delete-preview] {order:-1;margin-right:auto;border-color:#c6c6c6;color:#737373;}
+.pill-preview-actions [data-delete-preview]:hover {background:#fef2f2;color:#991b1b;}
+.pill-preview-actions button {min-height:40px;padding:8px 18px;}
+.pill-preview-actions [data-publish-preview] {background:#171717;border-color:#171717;color:#fff;}
 .pill-draft-item {display:grid;grid-template-columns:minmax(0,1fr) 36px;gap:12px;align-items:start;margin-bottom:12px;}
-.pill-draft-item button {width:36px;height:36px;padding:0;}
+.pill-draft-item button {width:36px;height:36px;min-height:36px;padding:0;border-color:transparent;color:#737373;font-size:22px;}
+.pill-draft-item:last-child {margin-bottom:0;}
+.improvement-review {max-width:1100px;display:grid;gap:18px;}
+.improvement-target {padding:20px 0;}
+.improvement-target h3 {font-size:19px;margin:0 0 16px;}
+.improvement-target h3 small {font-size:13px;font-weight:400;color:var(--muted);}
+.improvement-change {border:1px solid var(--line);border-radius:4px;padding:20px;margin:0 0 16px;}
+.improvement-change h4,.improvement-change h5 {margin:0;font-size:14px;}
+.improvement-diff {display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:24px;margin:16px 0;}
+.improvement-diff > * {min-width:0;}
+.improvement-diff p {font-size:14px;color:var(--muted);line-height:1.65;}
+.improvement-review label {display:grid;gap:10px;font-size:14px;font-weight:600;}
+.improvement-review textarea,.improvement-review select {box-sizing:border-box;width:100%;min-width:0;font:inherit;font-weight:400;padding:10px 12px;background:#fafafa;border:1px solid #d4d4d4;border-radius:4px;}
+.improvement-review textarea {resize:vertical;line-height:1.6;}
+.improvement-review .pill-field-heading select {width:130px;flex:none;}
+.improvement-review .improvement-confirm {display:flex;align-items:flex-start;font-weight:400;}
+.improvement-confirm input {width:16px;height:16px;flex:none;margin:2px 0 0;}
+.improvement-change details {font-size:13px;color:var(--muted);}
+.improvement-review [data-error] {color:#991b1b;}
+.improvement-review [data-error]:empty,.improvement-review [data-status]:empty {display:none;}
 .expert-dialogue > p,.expert-examples > p {max-width:76ch;color:var(--muted);}
 
 .pill-step-tabs > span {padding:14px 0;color:var(--muted);opacity:.65;cursor:default;}

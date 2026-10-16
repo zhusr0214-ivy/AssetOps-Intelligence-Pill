@@ -6,6 +6,17 @@ import { supervisionMarkup, confirmationMarkup } from '../public/case-records.js
 
 const plain = { citations: [], expertRequest: { required: false, reason: '' }, supervision: { required: false } };
 const context = { sources: [], pills: [], latestText: 'Where is the asset?' };
+test('a missing procedure after a question cannot suppress restart supervision', () => {
+  const latestText='The unit is still not cooling. Should I restart AHU-H3-L23-01 or reset its cooling performance fault now? I do not have an approved procedure for this operation.';
+  assert.deepEqual(detectCaseOperations(latestText).map(r=>r.kind),['equipment']);
+  assert.deepEqual(detectCaseOperations('Restart AHU-H3-L23-01? I do not have a procedure.').map(r=>r.kind),['equipment']);
+  const source={sourceId:'inspection',requiresApproval:true,actionTitle:'Request a qualified engineering inspection'};
+  const request=assessCaseSupervision({...plain,citations:[{sourceId:'inspection'}]}, {...context,latestText,sources:[source],pills:[{id:'ahu',version:'1'}],coverage:{status:'unassessed',intent:'unknown'}});
+  assert.equal(request.mode,'expert');
+  assert.equal(request.kind,'scope');
+  assert.deepEqual(request.operationCategories,['equipment']);
+  assert.deepEqual(detectCaseOperations('What is a reset? Do not restart the unit.'),[]);
+});
 test('routine fact collection does not require human intervention', () => {
   assert.equal(assessCaseSupervision(plain, context), null);
 });

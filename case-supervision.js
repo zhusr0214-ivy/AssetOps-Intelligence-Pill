@@ -3,7 +3,7 @@ const fail = message => Object.assign(new Error(message), { status: 502 });
 const kinds = ['knowledge_gap', 'scope', 'conflict', 'approval', 'safety', 'expert_requested'];
 
 // Model judgments supplement, but cannot clear, server-owned action restrictions.
-export function assessCaseSupervision(proposed, { sources, pills, latestText = '' }) {
+export function assessCaseSupervision(proposed, { sources, pills, latestText = '', coverage }) {
   let request = null;
   if (proposed.supervision != null) {
     const value = proposed.supervision;
@@ -17,13 +17,20 @@ export function assessCaseSupervision(proposed, { sources, pills, latestText = '
   const approvalSources = sources.filter(s => cited.has(s.sourceId) && s.requiresApproval);
   if (approvalSources.length && (!request || request.kind === 'approval')) request = { required: true, kind: 'approval', subject: approvalSources.map(s => s.actionTitle).join('; ').slice(0, 2000), reason: 'The cited Pill action requires human review before use.' };
   if (request?.kind === 'approval' && !approvalSources.length) request = { ...request, kind: 'scope', reason: `${request.reason}\nNo validated Pill approval action is cited; expert judgment is required first.`.slice(0, 2000) };
-  if (!request && /(?:请|需要|找).{0,8}(?:专家|人工).{0,8}(?:确认|介入|判断)|(?:ask|need|request).{0,20}(?:an?\s+)?(?:expert|human)\s+(?:review|confirmation|help)/i.test(latestText)) request = { required: true, kind: 'expert_requested', subject: 'Requested expert review', reason: 'The user explicitly requested human expertise.' };
+  if (!request && /(?:请|需要|找).{0,8}(?:专家|人工).{0,8}(?:确认|介入|判断)|(?:ask|need|request).{0,20}(?:an?\s+)?(?:expert|human)\s+(?:review|confirmation|help|assessment)/i.test(latestText)) request = { required: true, kind: 'expert_requested', subject: 'Requested expert review', reason: 'The user explicitly requested human expertise.' };
   if (!request && proposed.expertRequest.required) request = { required: true, kind: 'knowledge_gap', subject: proposed.expertRequest.reason, reason: proposed.expertRequest.reason };
   const operations = detectCaseOperations(latestText);
   // Inspect direct operational advice as well as the user request: model output
   // cannot introduce an unreviewed high-impact operation into an ordinary query.
   const advised = detectCaseOperations(proposed.answer || '');
   const risks = [...operations, ...advised];
+  // Knowledge gaps alone do not warrant expert intervention for ordinary questions.
+  // Independent operation detection takes precedence over a model's benign intent label.
+  if (coverage && coverage.status !== 'unassessed' && !risks.length && ['general','clarification'].includes(coverage.intent) && ['knowledge_gap','scope'].includes(request?.kind)) request = null;
+  if (risks.length && coverage && ['partial','unsupported'].includes(coverage.status) && !['safety','conflict','expert_requested'].includes(request?.kind)) request = {
+    required:true,kind:coverage.status==='unsupported'?'knowledge_gap':'scope',
+    subject:[...new Set(risks.map(r=>r.label))].join('; '),reason:coverage.reason
+  };
   if (request?.kind === 'approval' && risks.some(r => !approvalSources.some(s => detectCaseOperations(s.actionTitle || '').some(a => a.kind === r.kind)))) request = { required: true, kind: 'scope', subject: [...new Set(risks.map(r => r.label))].join('; '), reason: 'The cited approval action does not cover all proposed operation categories. Expert assessment is required before reviewing an operational recommendation.' };
   if (risks.some(r => r.kind === 'safety')) request = { required: true, kind: 'safety', subject: 'Safety protection changes', reason: 'Changing safety protection requires escalation to the responsible qualified team. Chat approval cannot authorize this operation.' };
   else if (risks.length && !request) request = { required: true, kind: pills.length ? 'scope' : 'knowledge_gap', subject: [...new Set(risks.map(r => r.label))].join('; '), reason: pills.length ? 'This high-impact operation needs expert verification of the Pill coverage, equipment conditions and authority. A matching Pill alone does not authorize the operation.' : 'No applicable approved Pill supports this high-impact operation. An expert must assess the conditions and provide a suitable proposal before proceeding.' };

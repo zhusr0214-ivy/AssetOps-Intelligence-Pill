@@ -47,12 +47,15 @@ test('admin with name and scope can publish directly', async t => {
   await studio.change(record.id, 'save', { revision: fork.revision, content, authenticatedActor: adminActor, authenticatedRoles: adminRoles });
   assert.equal((await studio.active()).name, ahuPill.name);
 });
-test('validation requires name, scope and actions', async t => {
+test('validation requires name, scope, actions and decision rules', async t => {
   const { record, content } = await setup(t);
   assert.equal(validateDraft({ pill: { name: '', scope: '', actions: [] } }).passed, false);
   assert.equal(validateDraft({ pill: { name: 'Test', scope: '', actions: [] } }).passed, false);
   assert.equal(validateDraft({ pill: { name: 'Test', scope: 'Scope text', actions: [] } }).passed, false);
-  assert.equal(validateDraft({ pill: { name: 'Test', scope: 'Scope text', actions: [{ id: 'a1', title: 'Act', instruction: 'Do it', owner: 'Op', requiresApproval: false, ruleIds: [] }] } }).passed, true);
+  const minimal={pill:{name:'Test',scope:'Scope text',actions:[{id:'a1',instruction:'Record the location.'}]}};
+  assert.equal(validateDraft(minimal).passed,false);
+  minimal.pill.rules=[{id:'r1',guidance:'If a fault is reported, record the location.'}];
+  assert.equal(validateDraft(minimal).passed,true);
   assert.equal(validateDraft(record.content).passed, true);
   assert.equal(validateDraft(content).passed, true);
 });

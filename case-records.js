@@ -7,10 +7,11 @@ const text = (value, max) => typeof value === 'string' && value.trim() && value.
 const actor = body => { if (!body.authenticatedActor?.id || !text(body.authenticatedActor.name, 120)) throw fail('An authenticated account is required.', 403); return body.authenticatedActor; };
 const check = (incident, revision) => { if (!Number.isInteger(revision) || revision !== (incident.revision || 0)) throw fail('Case changed. Reload before saving.', 409); };
 
-export function createCaseRecords(store, studio, { answer = createCaseAnswer() } = {}) {
+export function createCaseRecords(store, studio, { answer = createCaseAnswer(), improvements } = {}) {
   const get = async id => { const incident = (await store.list()).find(i => i.id === id); if (!incident) throw fail('Case not found.', 404); return incident; };
   return {
     async confirmExperience(id, body) {
+      if(improvements)return improvements.create(id,body);
       const who = actor(body);
       if (body.confirmed !== true || !text(body.solutionId, 100)) throw fail('Confirm the expert experience to save it as a Pill draft.');
       const save = async () => {
@@ -69,7 +70,7 @@ export function createCaseRecords(store, studio, { answer = createCaseAnswer() }
         let saved = (incident.expertSolutions || []).find(s => s.requestId === body.requestId);
         if (saved) {
           if (saved.actorId !== who.id || saved.solution !== body.solution.trim() || saved.messageId !== body.messageId || (body.applicability !== undefined && saved.applicability !== body.applicability.trim()) || (body.limitations !== undefined && saved.limitations !== body.limitations.trim()) || (saved.targetPill?.id || '') !== (body.targetPillId || '')) throw fail('This request ID belongs to a different submission.', 409);
-          if (saved.pillDraftId || body.deferDraft === true) return incident;
+          if (saved.pillDraftId || saved.improvementBatchId || body.deferDraft === true) return incident;
         } else {
           check(incident, body.revision);
           const message = incident.messages?.find(m => m.id === body.messageId && m.role === 'assistant' && m.expertRequest?.required);
@@ -81,7 +82,10 @@ export function createCaseRecords(store, studio, { answer = createCaseAnswer() }
           if (body.deferDraft === true) saved.status = 'pending_confirmation';
           incident = await store.update(id, { expertSolutions: [...(incident.expertSolutions || []), saved] }, body.revision);
         }
-        if (body.deferDraft === true) return incident;
+        if (body.deferDraft === true) {
+          if (improvements) return improvements.create(id, { solutionId: saved.id, revision: incident.revision || 0, confirmed: true, authenticatedActor: who, authenticatedRoles: body.authenticatedRoles });
+          return incident;
+        }
         // A staged Case record and idempotent import permit recovery in legacy JSON mode.
         const draft = await studio.importExpertSolution({ caseId: id, solutionId: saved.id, messageId: saved.messageId, actor: who, solution: saved.solution, applicability: saved.applicability, limitations: saved.limitations, targetPill: saved.targetPill, facts: saved.facts });
         incident = await get(id);

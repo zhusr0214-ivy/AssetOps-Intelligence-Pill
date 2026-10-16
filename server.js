@@ -15,6 +15,7 @@ import { createPillStudio } from './pill-studio.js';
 import { uploadLimit } from './document-parser.js';
 import { createCaseDocuments } from './case-documents.js';
 import { createLearningService } from './learning.js';
+import {createImprovementService} from './improvements.js';
 import { createTaskService } from './tasks.js';
 import { operationsMetrics, operationsCSV } from './operations-metrics.js';
 import { createAuth } from './auth.js';
@@ -84,7 +85,8 @@ async function readBody(req) {
   let size = 0;
   for await (const chunk of req) {
     size += Buffer.byteLength(chunk);
-    if (size > 100000) throw Object.assign(new Error('Request is too large.'), { status: 413 });
+    const limit=/^\/api\/improvements\/[^/]+\/[^/]+\/save$/.test(req.url)?300000:100000;
+    if (size > limit) throw Object.assign(new Error('Request is too large.'), { status: 413 });
     body += chunk;
   }
   try {
@@ -102,12 +104,13 @@ async function readBody(req) {
   catch { throw Object.assign(new Error('Invalid JSON body.'), { status: 400 }); }
 }
 
-export function createHandler(store = createIncidentStore(process.env.DATA_FILE || join(__dirname, 'data/incidents.json')), intakeAgent, triageAgent, studio = createPillStudio(process.env.PILL_DATA_FILE || join(__dirname, 'data/pills.json')), learningAgent, coordinator) {
+export function createHandler(store = createIncidentStore(process.env.DATA_FILE || join(__dirname, 'data/incidents.json')), intakeAgent, triageAgent, studio = createPillStudio(process.env.PILL_DATA_FILE || join(__dirname, 'data/pills.json')), learningAgent, coordinator, improvementAgent) {
  const extractionAgent = intakeAgent || createIntakeAgent();
  const conversationAgent = intakeAgent || createCaseConversationAgent({ extract: extractionAgent, loadPills: () => studio.runtimePills() });
  const busyCases = new Set();
  const caseDocuments = createCaseDocuments(store);
- const caseRecords = createCaseRecords(store, studio);
+ const improvements = createImprovementService(store, studio, improvementAgent);
+ const caseRecords = createCaseRecords(store, studio, {improvements});
  const triage = createTriageService(store, triageAgent, undefined, undefined, () => studio.runtimePills(), coordinator);
  const review = createReviewService(store, () => studio.runtimePills());
  const learning = createLearningService(store, studio, learningAgent);
@@ -117,6 +120,14 @@ export function createHandler(store = createIncidentStore(process.env.DATA_FILE 
  try {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const path = url.pathname;
+  if(path==='/api/improvements'&&req.method==='GET')return sendJson(res,200,{batches:await improvements.list()});
+  const improvementMatch=path.match(/^\/api\/improvements\/([^/]+)\/([^/]+)(?:\/(analyze|save|publish|close))?$/);
+  if(improvementMatch){
+    const [,caseId,batchId,operation]=improvementMatch;
+    if(req.method==='GET'&&!operation)return sendJson(res,200,{batch:await improvements.get(caseId,batchId)});
+    if(req.method==='POST'&&operation)return sendJson(res,200,{batch:await improvements[operation](caseId,batchId,await readBody(req))});
+    return sendJson(res,405,{error:'Method not allowed.'});
+  }
   const publishedEdit = path.match(/^\/api\/studio\/([^/]+)(?:\/|$)/);
   if (publishedEdit && !['GET','HEAD'].includes(req.method) && req.authenticatedRoles && !req.authenticatedRoles.includes('admin')) {
     const record = await studio.get(decodeURIComponent(publishedEdit[1]));
@@ -185,7 +196,7 @@ export function createHandler(store = createIncidentStore(process.env.DATA_FILE 
     if (req.method === 'POST' && operation) return sendJson(res, 200, await studio.manageVersion(id, version, operation, await readBody(req)));
     return sendJson(res, 405, { error: 'Method not allowed.' });
   }
-  if (path === '/api/studio' && req.method === 'GET') { const records = await studio.list(), incidents = await store.list(); return sendJson(res, 200, { records, drafts: records.filter(r => r.state !== 'published').map(r => r.content.pill), candidates: incidents.flatMap(i => i.learningCandidates || []), pendingLearningProposals: incidents.flatMap(i => (i.learningRuns || []).flatMap(r => r.proposals)).filter(p => !p.decision).length }); }
+  if (path === '/api/studio' && req.method === 'GET') { const records = await studio.list(), incidents = await store.list(); return sendJson(res, 200, { records, improvements:await improvements.list(), drafts: records.filter(r => r.state !== 'published').map(r => r.content.pill), candidates: incidents.flatMap(i => i.learningCandidates || []), pendingLearningProposals: incidents.flatMap(i => (i.learningRuns || []).flatMap(r => r.proposals)).filter(p => !p.decision).length }); }
   if (path === '/api/studio' && req.method === 'POST') return sendJson(res, 201, { record: await studio.create(await readBody(req)) });
   const documentMatch = path.match(/^\/api\/studio\/([^/]+)\/documents(?:\/([^/]+)(?:\/(analyze|merge|file|draft))?)?$/);
   if (documentMatch) {
@@ -282,7 +293,7 @@ export function createHandler(store = createIncidentStore(process.env.DATA_FILE 
       const analysis = assessIntake({ ...incident, ...data });
       if (!analysis.fields.description) return sendJson(res, 422, { error: 'A description is required.' });
       if (match[2] && !analysis.readyForTriage) return sendJson(res, 422, { error: 'Complete the required information before submitting.', ...analysis });
-      if (match[2] && (conflicts.length || incident.messages?.some(message => message.role === 'user' && message.state !== 'complete'))) return sendJson(res, 422, { error: 'Resolve pending messages and conflicting information before submitting.' });
+      if (match[2] && incident.messages?.some(message => message.role === 'user' && message.state !== 'complete')) return sendJson(res, 422, { error: 'Resolve pending messages before submitting.' });
       const status = match[2] ? 'ready_for_triage' : (analysis.readyForTriage ? 'draft' : 'needs_info');
       return sendJson(res, 200, { incident: await store.update(incident.id, { ...analysis.fields, status, conflicts, manualFields: [...new Set([...manualFieldsFor(incident), ...Object.keys(data)])] }, body.revision ?? (incident.revision || 0)) });
     }

@@ -31,7 +31,7 @@ export function validateLearning(value, snapshot) {
   return { summary: value.summary, questions: value.questions, proposals };
 }
 
-export function createLearningAgent({ env = process.env, fetchImpl = modelFetch, timeoutMs = 60000 } = {}) {
+export function createLearningAgent({ env = process.env, fetchImpl = modelFetch, timeoutMs = 60000, systemPrompt = prompt, validator = validateLearning } = {}) {
   return async snapshot => {
     const key = env.SOCLAAS_API_KEY?.trim(), base = env.SOCLAAS_BASE_URL?.trim();
     if (!key || !base) throw Object.assign(new Error('Configure SOCLAAS_BASE_URL and SOCLAAS_API_KEY, then restart the server.'), { status: 503 });
@@ -39,11 +39,11 @@ export function createLearningAgent({ env = process.env, fetchImpl = modelFetch,
     try { url = new URL(`${base.replace(/\/+$/, '')}/chat/completions`); if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) throw new Error(); }
     catch { throw fail('SOCLAAS_BASE_URL must be a plain HTTPS API base URL.'); }
     try {
-      const response = await fetchImpl(url, { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(timeoutMs), headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: env.SOCLAAS_MODEL?.trim() || 'default', messages: [{ role: 'system', content: prompt }, { role: 'user', content: JSON.stringify(snapshot) }] }) });
+      const response = await fetchImpl(url, { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(timeoutMs), headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: env.SOCLAAS_MODEL?.trim() || 'default', messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: JSON.stringify(snapshot) }] }) });
       if (!response.ok) throw fail(response.status === 429 ? 'Learning model rate limit reached. Retry later.' : 'Learning model request failed. Check server configuration or retry.');
       const result = await response.json(), choice = result.choices?.[0], raw = choice?.message?.content;
       if (choice?.finish_reason === 'length' || typeof raw !== 'string' || raw.length > 65000) throw fail('Learning response was incomplete. No proposals were saved.');
-      return validateLearning(JSON.parse(raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')), snapshot);
+      return validator(JSON.parse(raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')), snapshot);
     } catch (error) {
       if (error.status) throw error;
       if (['TimeoutError', 'AbortError'].includes(error.name)) throw fail('Learning analysis timed out. Retry later.');

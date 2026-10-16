@@ -16,7 +16,7 @@ export function expertMarkup(incident, draft) {
   if (!request) return '';
   const pending = incident.expertSolutions?.find(s => s.messageId === request.id);
   const values = draft.messageId === request.id ? draft : pending || {};
-  return `<section class="expert-solution expert-entry"><h3 id="expert-solution-heading">Expert solution required</h3>${canRecord(['expert']) ? `<form data-expert-solution data-message-id="${e(request.id)}"><textarea name="solution" aria-labelledby="expert-solution-heading" rows="4" maxlength="4000" required>${e(values.solution || '')}</textarea>${request.matchedPills?.length ? `<label>Pill draft<select name="targetPillId"><option value="">Create new Pill draft</option>${request.matchedPills.map(p => `<option value="${e(p.id)}" ${(values.targetPillId || values.targetPill?.id) === p.id ? 'selected' : ''}>${e(p.name)} / v${e(p.version)}</option>`).join('')}</select></label>` : ''}<button type="submit">Submit experience</button></form>` : '<p>An expert account is required to submit a solution.</p>'}</section>`;
+  return `<section class="expert-solution expert-entry"><h3 id="expert-solution-heading">Expert solution required</h3>${canRecord(['expert']) ? `<form data-expert-solution data-message-id="${e(request.id)}"><textarea name="solution" aria-labelledby="expert-solution-heading" rows="4" maxlength="4000" required>${e(values.solution || '')}</textarea><button type="submit">Submit experience</button></form>` : '<p>An expert account is required to submit a solution.</p>'}</section>`;
 }
 
 export function supervisionMarkup(incident, drafts = {}, messageId) {
@@ -81,5 +81,5 @@ export function mountCaseRecords(root, onSaved) {
 }
 
 export function experienceMarkup(incident, busy = false) {
-  return (incident.expertSolutions || []).map(s => `<article><p>${e(s.solution)}</p><small>${e(s.expert)} / ${e(caseDate(s.createdAt))}</small>${s.pillDraftId ? `<a href="/studio/${e(s.pillDraftId)}">Open Pill draft</a>${s.experienceConfirmation ? `<small>Confirmed by ${e(s.experienceConfirmation.name)} / ${e(caseDate(s.experienceConfirmation.at))}</small>` : ''}` : canRecord(['expert']) ? `<button type="button" data-confirm-experience="${e(s.id)}" ${busy ? 'disabled' : ''}>Confirm &amp; save as Pill draft</button>` : '<p>Awaiting expert confirmation.</p>'}</article>`).join('') || '<p>No expert experience recorded.</p>';
+  return (incident.expertSolutions || []).map(s => `<article><p>${e(s.solution)}</p><small>${e(s.expert)} / ${e(caseDate(s.createdAt))}</small>${s.improvementBatchId?`<a href="/studio/improvements/${e(incident.id)}/${e(s.improvementBatchId)}">Review improvement proposal</a>`:s.pillDraftId ? `<a href="/studio/${e(s.pillDraftId)}">Open Pill draft</a>` : canRecord(['expert']) ? `<button type="button" data-confirm-experience="${e(s.id)}" ${busy ? 'disabled' : ''}>Confirm &amp; prepare improvements</button>` : '<p>Awaiting expert confirmation.</p>'}${s.experienceConfirmation?`<small>Confirmed by ${e(s.experienceConfirmation.name)} / ${e(caseDate(s.experienceConfirmation.at))}</small>`:''}</article>`).join('') || '<p>No expert experience recorded.</p>';
 }

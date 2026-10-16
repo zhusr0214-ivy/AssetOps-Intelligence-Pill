@@ -2,6 +2,23 @@ import { randomUUID } from 'node:crypto';
 import { assessIntake, fields } from './intake.js';
 import { feedbackKey } from './case-feedback.js';
 
+export function analysisFailure(error) {
+  const text = String(error?.message || '');
+  const rules = [
+    [/citation/i, 'citation_validation', 'The AI returned a citation that does not match the source. Retry analysis.'],
+    [/coverage/i, 'coverage_validation', 'The AI returned invalid Pill coverage evidence. Retry analysis.'],
+    [/concise response limit/i, 'reply_length', 'The AI reply exceeded the response length limit. Retry analysis.'],
+    [/follow-up target/i, 'follow_up_validation', 'The AI returned an invalid follow-up reference. Retry analysis.'],
+    [/Intake returned an invalid/i, 'extraction_validation', 'The AI returned invalid Case metadata. Retry analysis.'],
+    [/timed out|timeout/i, 'model_timeout', 'The model request timed out. Your message is saved.'],
+    [/HTTP 429/i, 'model_rate_limit', 'The model service is rate-limited. Wait briefly before retrying.'],
+    [/Configure|SOCLAAS_BASE_URL must/i, 'model_configuration', 'The server model configuration needs attention.'],
+    [/versions changed/i, 'pill_version_changed', 'Pill versions changed during analysis. Retry with current knowledge.']
+  ];
+  const match = rules.find(([pattern]) => pattern.test(text));
+  return { code: match?.[1] || 'analysis_failed', message: match?.[2] || 'The AI analysis failed. Check the model service or response validation and retry.', at: new Date().toISOString() };
+}
+
 export function manualFieldsFor(incident) {
   return incident.manualFields || fields.filter(key => incident[key]);
 }
@@ -49,6 +66,7 @@ export async function sendMessage(store, incident, input, agent) {
   if (documents.some(d => !d)) throw Object.assign(new Error('An attachment does not belong to this case.'), { status: 404 });
   const userMessage = existing || { id: randomUUID(), requestId: input.requestId, role: 'user', content: input.content.trim(), documentIds, createdAt: new Date().toISOString() };
   userMessage.state = 'pending';
+  delete userMessage.analysisFailure;
   if (!existing) messages.push(userMessage);
   const manualFields = manualFieldsFor(incident);
   const pending = await store.update(incident.id, { messages, manualFields, status: 'needs_info' }, incident.revision || 0);
@@ -62,6 +80,7 @@ export async function sendMessage(store, incident, input, agent) {
     return await store.update(incident.id, { ...updated, messages, ...(resultFeedback ? { resultFeedback } : {}), status: analysis.readyForTriage && !conflicts.length ? 'draft' : 'needs_info' }, pending.revision);
   } catch (error) {
     userMessage.state = 'failed';
+    userMessage.analysisFailure = analysisFailure(error);
     await store.update(incident.id, { messages }, pending.revision);
     throw error;
   }

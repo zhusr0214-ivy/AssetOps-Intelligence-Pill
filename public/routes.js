@@ -1,9 +1,11 @@
 export function canonicalPath(path) {
   const clean = path.length > 1 ? path.replace(/\/$/, '') : path;
   if (['/', '/dashboard', '/overview'].includes(clean)) return '/studio';
-  if (clean === '/overview/analytics' || clean === '/learning') return '/studio';
+  if (clean === '/overview/analytics') return '/studio/analytics';
   if (clean === '/governance') return '/studio';
+  if (clean === '/studio/improvements') return '/studio';
   if (clean === '/studio/new/upload' || clean === '/studio/new/expert') return '/studio/new';
+  if (clean === '/learning') return '/studio/improvements';
   if (clean === '/incidents') return '/cases';
   if (clean.startsWith('/incidents/')) return clean.replace('/incidents/', '/cases/');
   for (const stage of ['triage', 'review']) {

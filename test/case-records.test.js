@@ -143,9 +143,8 @@ test('expert update preserves published snapshot and requires incorporation plus
   const draft = await studio.get(saved.expertSolutions[0].pillDraftId);
   assert.deepEqual(draft.releases, original);
   assert.equal((await studio.runtimePills())[0].version, original[0].pill.version);
-  await assert.rejects(studio.change(draft.id, 'publish', { revision: draft.revision, reviewer: 'Other', authenticatedActor: { id: 'reviewer-2', name: 'Other' }, notes: 'Attempt', expertConfirmed: true }), { status: 403 });
-  const released=await studio.change(draft.id, 'publish', { revision: draft.revision, authenticatedActor: who, authenticatedRoles: ['admin'] });
-  assert.equal(released.state,'published');assert.deepEqual(released.releases[0].pill,original[0].pill);
+  await assert.rejects(studio.change(draft.id, 'publish', { revision: draft.revision, reviewer: 'Other', authenticatedActor: { id: 'reviewer-2', name: 'Other' }, notes: 'Attempt', expertConfirmed: true }), /incorporated/);
+  await assert.rejects(studio.change(draft.id, 'publish', { revision: draft.revision, reviewer: who.name, authenticatedActor: who, notes: 'Attempt', expertConfirmed: true }), { status: 403 });
 });
 
 test('failed JSON draft import preserves solution and retry recovers without duplication', async t => {

@@ -14,7 +14,8 @@ const negative = /\b(?:do not|don't|never|no need to|not going to|without)\b|(?<
 
 export function detectCaseOperations(text = '') {
   const found = new Map();
-  for (const clause of text.split(/[.!。！\n;；]|\bbut\b|但是/iu)) {
+  // Keep question punctuation and prevent a later negation from suppressing it.
+  for (const clause of text.split(/(?<=[.!?。！？\n;；])|\bbut\b|但是/iu)) {
     const question = asking.test(clause);
     if (explanation.test(clause) || negative.test(clause) || (!question && history.test(clause))) continue;
     for (const [kind, label, pattern] of operations) {

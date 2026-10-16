@@ -33,7 +33,6 @@ export async function renderCaptureEntry(view, mode, navigate) {
   const user = currentUser();
   if (!user?.roles?.some(role => ['admin','expert'].includes(role))) { view.innerHTML='<header class="workspace-heading"><h2>Create Pill</h2></header><p>Creating knowledge requires an expert account.</p><a href="/studio">Return to Pill Studio</a>'; return; }
   view.innerHTML = `<header class="workspace-heading"><h2>Create Pill</h2></header><form id="capture-entry" class="pill-create-form" novalidate><label>Pill name<input name="name" maxlength="200" placeholder="For example: Floor lighting failure assessment" required></label><label>Knowledge<textarea name="experience" rows="8" maxlength="12000" placeholder="Enter your knowledge or experience"></textarea></label><input type="file" name="file" aria-label="Upload file" accept=".pdf,.docx,.txt,.md,.png,.jpg,.jpeg" hidden><div class="file-choice"><button type="button" data-choose-file>Upload file</button><span data-file-name aria-live="polite"></span><button type="button" data-remove-file hidden aria-label="Remove file" title="Remove file">&times;</button></div><p class="form-error" role="alert" hidden></p><p role="status"></p><div class="create-submit"><button type="submit" class="primary">Create Pill</button></div></form>`;
-  view.insertAdjacentHTML('afterbegin', '<a class="back-link" href="/studio" aria-label="Back to Pill Studio"><span aria-hidden="true">&larr;</span> Pill Studio</a>');
   const form = view.querySelector('form');
   const contributor = user.name || user.username;
   let record, sources, index = 0, documentId, message;
@@ -67,7 +66,7 @@ export async function renderCaptureEntry(view, mode, navigate) {
       button.disabled = true;
       chooseFile.disabled = true; removeFile.disabled = true;
       form.querySelectorAll('input, textarea').forEach(el => el.disabled = true);
-      if (!record) record = (await api('/api/studio', { method: 'POST', body: JSON.stringify({ name: form.elements.name.value.trim() }) })).record;
+      if (!record) record = (await api('/api/studio', { method: 'POST', body: JSON.stringify({ name: form.elements.name.value.trim(), owner: contributor, domain: 'asset_operations' }) })).record;
       else record = (await api(`/api/studio/${encodeURIComponent(record.id)}`)).record;
       while (index < sources.length) {
         if (!documentId) {

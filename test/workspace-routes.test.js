@@ -9,7 +9,7 @@ import { canonicalPath, caseRoute } from '../public/routes.js';
 import { createHandler } from '../server.js';
 
 test('old links resolve to four workspaces and preserve case identity and stage', () => {
-  for (const [old, current] of [['/', '/studio'], ['/dashboard', '/studio'], ['/overview', '/studio'], ['/overview/analytics', '/studio'], ['/incidents', '/cases'], ['/incidents/new', '/cases/new'], ['/incidents/INC-1/edit', '/cases/INC-1/edit'], ['/triage/INC-1', '/cases/INC-1/triage'], ['/review/INC-1', '/cases/INC-1/review'], ['/triage', '/cases/triage'], ['/review', '/cases/review'], ['/learning', '/studio'], ['/governance', '/studio']]) {
+  for (const [old, current] of [['/', '/studio'], ['/dashboard', '/studio'], ['/overview', '/studio'], ['/overview/analytics', '/studio/analytics'], ['/incidents', '/cases'], ['/incidents/new', '/cases/new'], ['/incidents/INC-1/edit', '/cases/INC-1/edit'], ['/triage/INC-1', '/cases/INC-1/triage'], ['/review/INC-1', '/cases/INC-1/review'], ['/triage', '/cases/triage'], ['/review', '/cases/review'], ['/learning', '/studio/improvements'], ['/governance', '/studio']]) {
     assert.equal(canonicalPath(old), current);
     assert.equal(canonicalPath(current), current);
   }

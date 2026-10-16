@@ -14,17 +14,17 @@ export function pillContentMarkup(p, {hideEmptyOptional=false, anchors=false, sh
 export function previewMarkup(record, editing=false) {
   const p=record.content.pill;
   const text=(label,key)=>editing?`<label>${label}<textarea name="${key}" rows="3" maxlength="4000">${e(p[key]||'')}</textarea></label>`:`<section class="triage-section"><h3>${label}</h3><p class="source-text">${e(p[key]||'Not specified')}</p></section>`;
-  const collection=(label,key,field)=>`<section class="triage-section" data-collection="${key}"><h3>${label}</h3>${(p[key]||[]).map((item,i)=>editing?`<div data-item="${i}" class="pill-draft-item"><textarea rows="3" maxlength="2000" aria-label="${label} ${i+1}">${e(field?item[field]:item)}</textarea><button type="button" data-remove="${key}" data-index="${i}" aria-label="Remove ${label.toLowerCase()} ${i+1}" title="Remove">&times;</button></div>`:`<p class="source-text">${e(field?item[field]:item)}</p>`).join('')||(!editing?'<p>Not specified</p>':'')}${editing?`<button type="button" data-add="${key}" aria-label="Add ${label.toLowerCase()}" title="Add ${label.toLowerCase()}">+</button>`:''}</section>`;
-  return `<header class="workspace-heading"><h2>${e(p.name)}</h2><span class="badge">${e(record.state==='published'?'Published':'Draft')}</span></header>
-  ${editing ? `<article class="pill-content-preview">
+  const collection=(label,key,field)=>`<section class="triage-section" data-collection="${key}"><div class="pill-field-heading"><h3>${label}</h3>${editing?`<button type="button" class="pill-item-add" data-add="${key}" aria-label="Add ${label.toLowerCase()}" title="Add ${label.toLowerCase()}">+</button>`:''}</div>${(p[key]||[]).map((item,i)=>editing?`<div data-item="${i}" class="pill-draft-item"><textarea rows="3" maxlength="2000" aria-label="${label} ${i+1}">${e(field?item[field]:item)}</textarea><button type="button" data-remove="${key}" data-index="${i}" aria-label="Remove ${label.toLowerCase()} ${i+1}" title="Remove ${label.toLowerCase()} ${i+1}">&times;</button></div>`:`<p class="source-text">${e(field?item[field]:item)}</p>`).join('')||(!editing?'<p>Not specified</p>':'')}</section>`;
+  return `<header class="workspace-heading"><h2>Pill Studio</h2><a class="back-link" href="/studio" aria-label="Back to Pill Studio"><span class="back-arrow" aria-hidden="true">&larr;</span>All drafts</a></header>
+  <article class="pill-content-preview${editing?' pill-draft-editor':''}">
+    ${editing?'':`<div class="pill-header"><h3>${e(p.name)}</h3>${record.state==='published'?'<span class="badge">Published</span>':''}</div>`}
     ${editing?`<label>Pill name<input name="name" maxlength="200" value="${e(p.name)}"></label>`:''}
     ${text('Scope','scope')}
     ${collection('Actions','actions','instruction')}
     ${collection('Decision rules','rules','guidance')}
-    ${collection('Operating limits','boundaries')}
-    ${collection('Escalation','escalationConditions')}
-  </article>` : pillContentMarkup(p)}<p data-preview-status role="status"></p><p data-preview-error class="form-error source-text" role="alert" hidden></p>
-  <div class="actions">${record.state==='published'?'<button type="button" data-edit-preview>Edit</button>':`<button type="button" data-edit-preview>${editing?'Cancel':'Edit'}</button><button type="button" data-delete-preview>Delete</button><button type="button" data-save-preview>Save</button><button type="button" class="primary" data-publish-preview>Publish</button>`}</div>`;
+    ${editing||(p.boundaries||[]).some(value=>value.trim())?collection('Operating limits','boundaries'):''}
+  </article><p data-preview-status role="status"></p><p data-preview-error class="form-error source-text" role="alert" hidden></p>
+  <div class="actions pill-preview-actions">${record.state==='published'?'<button type="button" data-edit-preview>Edit</button>':`<button type="button" data-edit-preview>${editing?'Cancel':'Edit'}</button><button type="button" data-delete-preview>Delete</button><button type="button" data-save-preview>Save</button><button type="button" class="primary" data-publish-preview>Publish</button>`}</div>`;
 }
 
 export function renderPillPreview(view,initialRecord,navigate,{editing=false}={}) {
@@ -36,7 +36,7 @@ export function renderPillPreview(view,initialRecord,navigate,{editing=false}={}
     if(!editing)return;
     const pill=working.content.pill;
     for(const key of ['name','scope']){const input=view.querySelector(`[name="${key}"]`);if(input)pill[key]=input.value.trim();}
-    for(const [key,field] of [['actions','instruction'],['rules','guidance'],['boundaries',null],['escalationConditions',null]]){
+    for(const [key,field] of [['actions','instruction'],['rules','guidance'],['boundaries',null]]){
       view.querySelectorAll(`[data-collection="${key}"] [data-item]`).forEach(row=>{
         const index=Number(row.dataset.item),value=row.querySelector('textarea').value.trim();
         if(field){pill[key][index][field]=value;if(key==='rules')pill[key][index].cardExplanation=value;}
@@ -61,7 +61,9 @@ export function renderPillPreview(view,initialRecord,navigate,{editing=false}={}
     };
     view.querySelectorAll('[data-add]').forEach(b=>b.onclick=()=>{
       capture();const key=b.dataset.add,id=`manual-${crypto.randomUUID().slice(0,12)}`;
+      working.content.pill[key] ||= [];
       working.content.pill[key].push(key==='actions'?{id,title:'Action',instruction:'',owner:'',requiresApproval:true,ruleIds:[]}:key==='rules'?{id,title:'Rule',guidance:'',cardExplanation:'',actionIds:[]}: '');paint();
+      const inputs=view.querySelectorAll(`[data-collection="${key}"] textarea`);inputs[inputs.length-1]?.focus();
     });
     view.querySelectorAll('[data-remove]').forEach(b=>b.onclick=()=>{
       capture();const key=b.dataset.remove,removed=working.content.pill[key].splice(Number(b.dataset.index),1)[0];
@@ -88,6 +90,7 @@ export function renderPillPreview(view,initialRecord,navigate,{editing=false}={}
         if(!content.pill.name.trim())throw new Error('Enter the Pill name.');
         if(operation==='publish'&&!content.pill.scope.trim())throw new Error('Scope is required before publishing.');
         if(operation==='publish'&&(!content.pill.actions.length||content.pill.actions.some(a=>!a.instruction.trim())))throw new Error('At least one valid action is required. Fill in or remove empty actions.');
+        if(operation==='publish'&&(!content.pill.rules?.length||content.pill.rules.some(r=>!r.guidance?.trim())))throw new Error('At least one valid decision rule is required. Fill in or remove empty decision rules.');
         record=await request('save',{content});
         if(operation==='publish'){
           record=await request('publish');

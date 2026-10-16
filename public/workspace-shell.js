@@ -18,7 +18,7 @@ export function syncWorkspaceHeader(root, path, user) {
     if(versionNote.textContent!==versionText)versionNote.textContent=versionText;
   }else versionNote?.remove();
 
-  const text = source?.textContent || titles[path.split('/')[1]] || 'Workspace';
+  const text = source?.textContent || (['/overview/analytics', '/studio/analytics'].includes(path) ? 'Operational analytics' : titles[path.split('/')[1]]) || 'Workspace';
   if (title.textContent !== text) title.textContent = text;
   if (source) {
     source.hidden = true;

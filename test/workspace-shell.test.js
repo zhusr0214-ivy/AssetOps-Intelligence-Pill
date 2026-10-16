@@ -25,8 +25,8 @@ test('workspace header keeps actions and metadata, uses safe account text, and i
   assert.equal(observer.takeRecords().length, 0);
   observer.disconnect();
   root.replaceChildren();
-  syncWorkspaceHeader(root, '/studio', user);
-  assert.equal(doc.querySelector('#page-title').textContent, 'Pill Studio');
+  syncWorkspaceHeader(root, '/overview/analytics', user);
+  assert.equal(doc.querySelector('#page-title').textContent, 'Operational analytics');
   syncWorkspaceHeader(root, '/settings', null);
   assert.equal(doc.querySelector('.context').hidden, true);
 });
