@@ -48,9 +48,9 @@ An empty current field cannot contradict new information.
 A general symptom and a supporting measurement are compatible: "not cooling adequately" and "room temperature is 28.4°C" are not contradictory.
 Use contradictions only for incompatible claims about the same property, equipment and time. New detail alone is not a contradiction.
 The application appends compatible facts and keeps earlier evidence.
-If observations, actionsTaken or affectedScope are explicitly corrected or contradict the current facts, return the complete proposed field, keeping unrelated valid facts, and mark the field in corrections or contradictions. The system auto-merges corrections; the AI handles any real conflict by asking the user directly in conversation.
+If observations, actionsTaken or affectedScope are explicitly corrected or contradict the current facts, return the complete proposed field, keeping unrelated valid facts, and mark the field in corrections or contradictions for human confirmation.
 contradictions contains fields whose new facts conflict with the same object and time in the current summary. Do not mark compatible additions as contradictions. Never silently combine mutually exclusive claims.
-Lighting being out, no breakers tripped, no smoke, no burning smell and no abnormal heat are compatible observations, not contradictions. When the user explicitly corrects a field or answers the assistant's clarification of that field, mark corrections. Do not require a separate UI confirmation. The system applies corrections automatically. Group a location correction with affectedScope only when the user is clearly correcting the same affected area; preserve unrelated areas.
+Lighting being out, no breakers tripped, no smoke, no burning smell and no abnormal heat are compatible observations, not contradictions. Group a location correction with affectedScope only when the user is clearly correcting the same affected area; preserve unrelated areas.
 Keep completed actions as history. A later action does not erase an earlier action. Do not put an old fact into corrections merely because it was not mentioned again.
 For location, asset, occurredAt and impact, copy an exact contiguous substring of a user message. For observations, actionsTaken and affectedScope, facts may be separate lines within the JSON string; each line must be an exact substring of a USER message. Do not add labels or paraphrase facts. Preserve negations. Explicit Unknown answers are valid.
 Title must be a short incident label in the user's language. For English, use 4-10 words and no more than 80 characters. Prefer location + asset or issue type. Do not copy a full sentence from a message. Keep an existing concise title unless new facts materially change the incident. Use only provided facts.
@@ -275,9 +275,6 @@ export function createIntakeAgent({ env = process.env, fetchImpl = modelFetch, t
     const merged = { ...supplied };
     const extracted = {};
     const conflicts = [];
-    // Each Case is an independent event; field disagreements are resolved in
-    // natural conversation by the AI, never through a conflict-confirmation card.
-    const autoMerge = (key, value) => { merged[key] = extracted[key] = key === 'title' ? value.slice(0, 150) : value; };
     const userMessages = context?.messages.filter(message => message.role === 'user').map(message => message.content) || [supplied.description];
     const latest = userMessages.at(-1) || '';
     if (!context?.messages || userMessages.length === 1) recoverInitialFacts(latest, proposed, supplied);
@@ -353,14 +350,14 @@ export function createIntakeAgent({ env = process.env, fetchImpl = modelFetch, t
           );
           // Repeated evidence does not create a new conflict.
           if (evidenceLines.every(line => current.includes(line))) continue;
-                   const reviewRequired = Boolean(current.trim()) && (
+          const reviewRequired = Boolean(current.trim()) && (
             proposed.corrections?.includes(key) ||
             proposed.contradictions?.includes(key)
           );
           const hasLatestEvidence = evidenceLines.some(line => latest.includes(line));
 
           if (reviewRequired) {
-            // AI resolves field disagreements in conversation; auto-merge the latest value.
+            // Ask for confirmation before replacing corrected or conflicting evidence.
             let replacement = value;
             // A room-reading correction does not retract the existing general symptom.
             if (key === 'observations' && /^Correction:\s*(?:the )?room temperature is /i.test(latest)) {
@@ -370,20 +367,22 @@ export function createIntakeAgent({ env = process.env, fetchImpl = modelFetch, t
             }
             if (key === 'observations') replacement = preserveUnrelatedRoomFacts(current, replacement, latest);
             if (replacement.length > 6000) throw failure('This field has too much evidence. Review and shorten the summary before retrying.', 422);
-            if (hasLatestEvidence) {
-              autoMerge(key, replacement);
-            }
+            if (hasLatestEvidence) conflicts.push({ field: key, current, proposed: replacement });
             continue;
           }
           if (!additions.length) continue;
 
           const next = [current, ...additions].filter(Boolean).join('\n');
           if (next.length > 6000) throw failure('This field has too much evidence. Review and shorten the summary before retrying.', 422);
-          autoMerge(key, next);
+          if (locked) {
+            conflicts.push({ field: key, current, proposed: next });
+          } else {
+            merged[key] = extracted[key] = next;
+          }
           continue;
         }
 
-        // Category changes are resolved in conversation, not via conflict cards.
+        // Require confirmation before changing an established specific category.
         if (key === 'category') {
           const current = supplied.category || '';
           const specificCategory = current &&
@@ -396,25 +395,31 @@ export function createIntakeAgent({ env = process.env, fetchImpl = modelFetch, t
             continue;
           }
 
-          autoMerge(key, value);
+          if (locked || specificCategory) {
+            conflicts.push({
+              field: key,
+              current,
+              proposed: value
+            });
+          } else {
+            merged[key] = extracted[key] = value;
+          }
           continue;
         }
 
         const latestSupports = latest.includes(rawValue) || (unknownValue && target === key);
-        if(context.conversationalFacts&&latestSupports&&proposed.corrections?.includes(key)){
-          autoMerge(key, value);continue;
-        }
         if (
           Boolean(supplied[key]?.trim()) &&
           proposed.contradictions?.includes(key)
         ) {
-          if (latestSupports) autoMerge(key, value);
+          if (latestSupports) conflicts.push({ field: key, current: supplied[key] || '', proposed: value });
           continue;
         }
         const corrected = Array.isArray(proposed.corrections) && proposed.corrections.includes(key) && latestSupports;
         if ((locked || supplied[key]) && (locked || !corrected)) {
-          if (latestSupports) autoMerge(key, value);
-        } else autoMerge(key, value);
+          // Only surface disagreements grounded in the latest message, not stale history.
+          if (latestSupports) conflicts.push({ field: key, current: supplied[key] || '', proposed: value });
+        } else merged[key] = extracted[key] = key === 'title' ? value.slice(0, 150) : value;
         continue;
       }
 
@@ -429,7 +434,9 @@ export function createIntakeAgent({ env = process.env, fetchImpl = modelFetch, t
     const nextTitle = conciseTitle(requestedTitle || currentTitle, merged, latest || supplied.description);
     const titleLocked = context ? (context.manualFields || []).includes('title') : Boolean(currentTitle);
     if (nextTitle !== currentTitle) {
-      merged.title = extracted.title = nextTitle;
+      if (titleLocked) {
+        if (context && requestedTitle) conflicts.push({ field: 'title', current: currentTitle, proposed: nextTitle });
+      } else merged.title = extracted.title = nextTitle;
     }
     return { ...assessIntake(merged, extracted, 'llm'), conflicts };
   };

@@ -19,14 +19,24 @@ test('offline backup restores originals and user store, retaining pre-restore da
   assert.equal(await readFile(join(previous, 'pills.json'), 'utf8'), '{"version":2}');
   assert.equal(await readFile(join(data, 'pills.json.uploads', 'doc'), 'utf8'), 'Source');
 });
-test('corruption, traversal and symbolic links never replace live data', async t => {
+test('corruption and traversal never replace live data', async t => {
   const dir = await temporary(t), data = join(dir, 'data'), backup = join(dir, 'backup'); await mkdir(data); await writeFile(join(data, 'cases.json'), '[]');
   await backupData(data, backup); await writeFile(join(backup, 'cases.json'), 'tampered');
   await assert.rejects(restoreData(backup, data), /integrity/); assert.equal(await readFile(join(data, 'cases.json'), 'utf8'), '[]');
   await writeFile(join(backup, 'manifest.json'), JSON.stringify({ version: 1, files: [{ name: '../outside' }] }));
   await assert.rejects(restoreData(backup, data), /path/);
-  await symlink(join(data, 'cases.json'), join(data, 'link'));
-  await assert.rejects(backupData(data, join(dir, 'bad-backup')), /symbolic/);
+  await t.test('backup rejects symbolic links when the host permits creating them', async subtest => {
+    const target = join(dir, 'link-target');
+    await mkdir(target); await writeFile(join(target, 'cases.json'), '[]');
+    try {
+      await symlink(target, join(data, 'link'), process.platform === 'win32' ? 'junction' : 'dir');
+    } catch (error) {
+      if (process.platform !== 'win32' || error.code !== 'EPERM') throw error;
+      subtest.skip('Windows sandbox does not permit creating symbolic links or junctions.');
+      return;
+    }
+    await assert.rejects(backupData(data, join(dir, 'bad-backup')), /symbolic/);
+  });
 });
 test('model failures open a circuit and recover after cooldown; bodies are bounded', async () => {
   let now = 0, fail = true;

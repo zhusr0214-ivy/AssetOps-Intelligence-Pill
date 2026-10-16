@@ -5,14 +5,14 @@ import {validateTriageResult} from '../triage.js';
 import {evaluatePill} from '../pill-evaluation.js';
 const facts={category:'water_leak',description:'未报告人员滑倒，水是否接触电器未确认。漏水原因未知。',observations:'水槽持续滴水。'};
 const pill={id:'qa',domain:'water_leak',applicability:{categories:['water_leak'],assetPrefixes:[],keywords:[]},rules:[{id:'R1',guidance:'Record unknowns.',cardExplanation:'Record unknowns.',actionIds:['A1']}],actions:[{id:'A1',ruleIds:['R1'],instruction:'Collect facts.',owner:'Engineer',requiresApproval:true}]};
-const output=evidence=>({summary:'Review reported facts.',hypotheses:[{ruleId:'R1',reasoning:'Review.',evidence,uncertainties:[]}],actionIds:['A1'],missingFields:[],prioritySuggestion:null});
+const output=(evidence,chinese=false)=>({summary:chinese?'核对已报告的事实。':'Review reported facts.',hypotheses:[{ruleId:'R1',reasoning:chinese?'核对现场报告并保留未知信息。':'Review.',evidence,uncertainties:chinese?['水是否接触电器尚未确认，漏水原因未知。']:[]}],actionIds:['A1'],missingFields:[],prioritySuggestion:null});
 test('catalog keeps negation and exact source text; resolution never trusts model quote or field',()=>{
  const catalog=caseEvidenceCatalog(facts);assert.equal(catalog[0].quote,'未报告人员滑倒，水是否接触电器未确认。');
- const resolved=resolveCaseEvidence(output([{evidenceId:'E1',field:'asset',quote:'没有风险'}]),catalog);
+ const resolved=resolveCaseEvidence(output([{evidenceId:'E1',field:'asset',quote:'没有风险'}],true),catalog);
  assert.deepEqual(resolved.hypotheses[0].evidence,[{field:'description',quote:catalog[0].quote}]);
  const validated=validateTriageResult(resolved,{validationScenario:true,fields:facts},pill);assert.equal(validated.hypotheses[0].evidence[0].quote,catalog[0].quote);
  assert.ok(!catalog.some(e=>['priority','category','title'].includes(e.field)));
- assert.throws(()=>validateTriageResult(resolveCaseEvidence(output([{evidenceId:'E999'}]),catalog),{validationScenario:true,fields:facts},pill),e=>e.validationCode==='evidence_source'&&e.evidenceDiagnostic.reason==='invalid_source_field_or_evidence_id');
+ assert.throws(()=>validateTriageResult(resolveCaseEvidence(output([{evidenceId:'E999'}],true),catalog),{validationScenario:true,fields:facts},pill),e=>e.validationCode==='evidence_source'&&e.evidenceDiagnostic.reason==='invalid_source_field_or_evidence_id');
 });
 test('adapter resolves corrected evidence IDs and retries unknown IDs without making up evidence',async()=>{
  const facts={category:'water_leak',description:'Water is dripping from the sink.',observations:'Dripping continues.'};

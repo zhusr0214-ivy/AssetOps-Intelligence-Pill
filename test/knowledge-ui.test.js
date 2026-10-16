@@ -23,13 +23,16 @@ function record() {
   return { id: ahuPill.id, revision: 2, state: 'draft', content: { pill: { ...structuredClone(ahuPill), domain: 'ahu_cooling' }, sources: [], examples: [] }, releases: [], events: [], validation: null, documents: [{ id: 'DOC-test', name: 'test.txt', status: 'extracted', warnings: [], blocks: [{ id: 'B1', location: 'Paragraph 1', text: 'Do not change setpoints.' }], candidates: [{ id: 'K-test', type: 'boundary', title: 'No setting changes', text: 'Do not change setpoints.', evidence: [{ blockId: 'B1', location: 'Paragraph 1', quote: 'Do not change setpoints.' }], relatedRuleIds: [], relatedActionIds: [], missing: [] }], questions: [], conflicts: [] }] };
 }
 
-test('Studio pages use tabs without duplicate cross-page controls', async t => {
+test('Studio uses the combined draft list without obsolete workflow tabs', async t => {
   const { root } = await browser(t, async () => ({ records: [record()] }));
   await renderStudio(root, '/studio', () => {});
   syncPageTabs(root, '/studio', '', true);
   assert.equal(root.querySelector('a[href="/studio/new"]'),null);
   assert.equal(root.querySelectorAll('a[href="/studio/new"]').length, 0);
-  assert.equal(root.querySelectorAll('a[href="/studio/improvements"]').length, 1);
+  assert.equal(root.querySelectorAll('a[href="/studio/improvements"]').length, 0);
+  assert.equal(root.querySelector('[data-page-tabs]'), null);
+  assert.ok(root.querySelector('[data-filter-source]'));
+  assert.equal(root.querySelectorAll('tbody a').length, 1);
   assert.equal(root.querySelector('.studio-entry-actions'), null);
   assert.equal(root.querySelector('.workspace-heading a'), null);
   assert.equal(root.querySelector('a[href="/studio/new/expert"]'), null);
@@ -125,114 +128,121 @@ test('failed creation extraction retries the existing source without creating or
   assert.equal(creates, 1); assert.equal(uploads, 1); assert.equal(analyzes, 2);
 });
 
-test('extraction gaps and expert supplement are available together without automatic merge', async t => {
-  const current = record(); current.documents[0].questions = ['Which asset type?']; current.documents[0].candidates[0].missing = ['Escalation owner'];
-  const { root } = await browser(t, async url => url === '/api/learning' ? { candidates: [] } : { record: current });
-  await renderStudio(root, `/studio/${ahuPill.id}`, () => {});
-  assert.match(root.querySelector('.knowledge-gaps').textContent, /Which asset type/);
-  assert.match(root.querySelector('.knowledge-gaps').textContent, /Escalation owner/);
-  assert.ok(root.querySelector('#manual-source'));
-  assert.equal(root.querySelector('#manual-source').closest('details').open, false);
-  assert.equal(root.querySelector('[name="accept-0"]').checked, false);
-});
-test('candidate form submits only checked, edited text and retains source citations', async t => {
-  let current = record(), submitted;
-  const { root, window } = await browser(t, async (url, options) => {
-    if (url === '/api/learning') return { candidates: [] };
-    if (url.endsWith('/merge')) {
-      submitted = JSON.parse(options.body);
-      current = { ...current, revision: 3, documents: [{ ...current.documents[0], status: 'reviewed', review: { reviewer: 'Expert', reviewedAt: 'Now', decisions: [{ decision: 'accepted', reviewedText: submitted.selections[0].text, evidence: current.documents[0].candidates[0].evidence }] } }] };
-    }
-    return { record: current };
-  });
-  await renderStudio(root, `/studio/${ahuPill.id}`, () => {});
-  const form = root.querySelector('[data-capture-review]');
-  assert.equal(form.parentElement.closest('form'), null);
-  assert.equal(form.elements['accept-0'].checked, false);
-  form.elements['accept-0'].checked = true; form.elements['text-0'].value = 'Do not change settings without site approval.';
-  form.elements.reviewer.value = 'Expert'; form.elements.confirmed.checked = true;
-  form.dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
-  await until(() => root.textContent.includes('Reviewed by Expert'));
-  assert.equal(submitted.confirmed, true); assert.equal(submitted.revision, 2);
-  assert.deepEqual(submitted.selections, [{ id: 'K-test', text: 'Do not change settings without site approval.',replaceId:'' }]);
-  assert.ok(root.textContent.includes('Paragraph 1: Do not change setpoints.'));
-});
-test('draft changes are saved automatically before source operations', async t => {
- let current=record();const calls=[];
- const {root,window}=await browser(t,async(url,options)=>{
-   if(url==='/api/learning')return {candidates:[]};
-   if(options.method==='POST'){const body=JSON.parse(options.body);calls.push({url,body});if(url.endsWith('/save'))current={...current,content:body.content,revision:3};else current={...current,revision:4};}
-   return {record:current};
- });
- await renderStudio(root,`/studio/${ahuPill.id}`,()=>{});
- const owner=root.querySelector('#pill-editor [name="owner"]');owner.value='Correct knowledge owner';owner.dispatchEvent(new window.Event('input',{bubbles:true}));
- const review=root.querySelector('[data-capture-review]');review.elements.reviewer.value='Expert';review.elements.confirmed.checked=true;review.dispatchEvent(new window.Event('submit',{bubbles:true,cancelable:true}));
- await until(()=>calls.length===2&&root.textContent.includes('Selected knowledge saved.'));
- assert.ok(calls[0].url.endsWith('/save'));assert.equal(calls[0].body.content.pill.owner,'Correct knowledge owner');assert.equal(calls[1].body.revision,3);
-});
-
-test('failed AI extraction refreshes revision and offers retry without clearing source', async t => {
-  let current = record(); current.documents[0].status = 'ready';
+// The current Studio prepares extracted sources and opens a compact preview.
+// These checks exercise that flow rather than the retired three-phase editor.
+test('extracted sources are prepared before displaying the resulting draft', async t => {
+  let current = record(); const calls = [];
   const { root } = await browser(t, async (url, options) => {
-    if (url === '/api/learning') return { candidates: [] };
-    if (url.endsWith('/analyze')) { current = { ...current, revision: 4, documents: [{ ...current.documents[0], status: 'failed', error: 'Model unavailable.' }] }; return { error: 'Model unavailable.' }; }
-    return { record: current };
-  });
-  await renderStudio(root, `/studio/${ahuPill.id}`, () => {});
-  root.querySelector('[data-analyze]').click();
-  await until(() => root.textContent.includes('Retry extraction'));
-  assert.equal(root.querySelector('[data-analyze]').disabled, false);
-  assert.ok(root.textContent.includes('Do not change setpoints.'));
-});
-
-
-test('save and continue persists edits then analyzes using the new revision', async t => {
-  let current=record(); current.documents[0].status='ready'; const calls=[];
-  const {root,window}=await browser(t,async(url,options)=>{
-    if(url==='/api/learning') return {candidates:[]};
-    if(options.method==='POST') {
-      const body=JSON.parse(options.body);calls.push({url,body});
-      if(url.endsWith('/save')) current={...current,revision:3,content:body.content};
-      if(url.endsWith('/analyze')) {assert.equal(body.revision,3);current={...current,revision:4,documents:[{...current.documents[0],status:'extracted'}]};}
+    calls.push({ url, options });
+    if (url.endsWith('/prepare-draft')) {
+      assert.equal(JSON.parse(options.body).revision, 2);
+      current = { ...current, revision: 3, content: { ...current.content, pill: { ...current.content.pill, scope: 'Prepared source scope' } }, documents: [{ ...current.documents[0], draftApplied: true }] };
     }
-    return {record:current};
+    return { record: structuredClone(current) };
   });
-  await renderStudio(root,`/studio/${ahuPill.id}`,()=>{});
-  const domain=root.querySelector('[name=domain]');domain.value='lift_fault';domain.dispatchEvent(new window.Event('input',{bubbles:true}));
-  root.querySelector('[data-analyze]').click();await until(()=>calls.length===2 && root.textContent.includes('Knowledge source updated.'));
-  assert.ok(calls[0].url.endsWith('/save'));assert.ok(calls[1].url.endsWith('/analyze'));assert.equal(calls[0].body.content.pill.domain,'lift_fault');
+  await renderStudio(root, '/studio/' + ahuPill.id, () => {});
+  assert.deepEqual(calls.map(c => c.url), ['/api/studio/' + ahuPill.id, '/api/studio/' + ahuPill.id + '/prepare-draft']);
+  assert.match(root.querySelector('.pill-content-preview').textContent, /Prepared source scope/);
+  assert.equal(root.querySelector('#pill-editor,[data-page-tabs]'), null);
 });
 
-
-test('source response refreshes evaluation gate before painting the completed extraction', async t => {
-  let current=record(),gets=0;current.documents[0].status='ready';
-  const {root}=await browser(t,async(url,options)=>{
-    if(url==='/api/learning') return {candidates:[]};
-    if(url.endsWith('/analyze')) {current={...current,revision:3,documents:[{...current.documents[0],status:'extracted'}]};return {record:current};}
-    gets++;return {record:{...current,evaluationGate:{state:'not_enabled',required:false}}};
+test('preparation failure preserves the source and a later open retries the latest revision', async t => {
+  let current = record(), attempts = 0;
+  const { root } = await browser(t, async (url, options) => {
+    if (url.endsWith('/prepare-draft')) {
+      attempts++;
+      assert.equal(JSON.parse(options.body).revision, current.revision);
+      if (attempts === 1) { current.revision = 3; return { error: 'Source preparation unavailable' }; }
+      current = { ...current, revision: 4, documents: [{ ...current.documents[0], draftApplied: true }] };
+    }
+    return { record: structuredClone(current) };
   });
-  await renderStudio(root,`/studio/${ahuPill.id}`,()=>{});
-  root.querySelector('[data-analyze]').click();await until(()=>root.textContent.includes('Knowledge source updated.'));
-  assert.equal(gets,2);assert.equal(root.querySelector('.evaluation-panel'),null);assert.equal(root.querySelector('[data-operation=submit],[data-confirmation-step]').disabled,true);assert.ok(!root.textContent.includes('Evaluation status unavailable'));
+  await renderStudio(root, '/studio/' + ahuPill.id, () => {});
+  assert.match(root.querySelector('[role=alert]').textContent, /Source preparation unavailable/);
+  assert.equal(root.querySelector('[data-publish-preview]'), null);
+  assert.equal(current.documents[0].blocks[0].text, 'Do not change setpoints.');
+  await renderStudio(root, '/studio/' + ahuPill.id, () => {});
+  assert.equal(attempts, 2); assert.ok(root.querySelector('.pill-content-preview'));
 });
 
-
-test('three-phase Studio shares Make sources without nested forms and combines final review fields',async t=>{
- const current=record();current.state='in_review';current.evaluationRequired=true;current.evaluations=[{id:'run',results:[],completedAt:'fixture',model:'fixture'}];current.evaluationGate={state:'expert_review_required',required:true,passed:false};
- const {root}=await browser(t,async url=>url==='/api/learning'?{candidates:[]}:{record:current});
- await renderStudio(root,`/studio/${ahuPill.id}`,()=>{});
- assert.equal(root.querySelector('.capture-panel').closest('form'),null);
- assert.equal(root.querySelector('.capture-panel').closest('[data-page-panel]').dataset.pagePanel,'draft sources');
- assert.equal(root.querySelector('#evaluation-review'),null);
- const approval=root.querySelector('#pill-approval');assert.ok(approval.querySelector('[data-combined-review]'));assert.equal(approval.querySelector('[name="evaluationNotes"]'),null);assert.ok(approval.querySelector('[name="notes"]'));assert.match(approval.querySelector('[value="publish"]').textContent,/Confirm & publish/);
+test('already applied and reviewed source candidates are never prepared twice', async t => {
+  let current = record(); const writes = [];
+  const { root } = await browser(t, async (url, options) => { if (options.method) writes.push(url); return { record: structuredClone(current) }; });
+  for (const update of [{ draftApplied: true }, { status: 'reviewed' }]) {
+    current = record(); Object.assign(current.documents[0], update);
+    await renderStudio(root, '/studio/' + ahuPill.id, () => {});
+    assert.ok(root.querySelector('.pill-content-preview'));
+  }
+  assert.deepEqual(writes, []);
 });
 
-test('running an expert example focuses and scrolls to the newly painted result without navigation',async t=>{
- let current=record();const navigation=[];const {root,window}=await browser(t,async(url,options)=>{
- if(url==='/api/learning')return {candidates:[]};
- if(url.endsWith('/expert/example')){const body=JSON.parse(options.body);current={...current,revision:3,expertTrials:[{id:'trial-new',facts:{description:body.description},report:{status:'complete',summary:'Ask which cards are affected first.',hypotheses:[],actions:[]},proposedHandling:'Ask which cards are affected first.'}]};}
- return {record:current};});
- const scrolled=[];window.HTMLElement.prototype.scrollIntoView=function(options){scrolled.push({element:this,options});};
- await renderStudio(root,`/studio/${ahuPill.id}`,url=>navigation.push(url));const form=root.querySelector('[data-expert-example]');form.elements.description.value='The door will not open; other cards are not checked.';form.dispatchEvent(new window.Event('submit',{bubbles:true,cancelable:true}));await until(()=>scrolled.some(x=>x.element.matches('[data-expert-trial]')));
- const result=root.querySelector('[data-expert-trial]');assert.equal(window.document.activeElement,result);assert.equal(scrolled.at(-1).element,result);assert.equal(scrolled.at(-1).options.block,'start');assert.equal(navigation.length,0);assert.equal(root.querySelectorAll('[data-expert-feedback] > label').length,1);
+test('ready and failed extraction states do not silently prepare unextracted knowledge', async t => {
+  let current = record(); const writes = [];
+  const { root } = await browser(t, async (url, options) => { if (options.method) writes.push(url); return { record: structuredClone(current) }; });
+  for (const status of ['ready', 'failed', 'analyzing']) {
+    current.documents[0].status = status;
+    await renderStudio(root, '/studio/' + ahuPill.id, () => {});
+    assert.ok(root.querySelector('.pill-content-preview'));
+  }
+  assert.deepEqual(writes, []);
+});
+
+test('published source records are read-only to experts and never auto-prepared', async t => {
+  const current = record(); current.state = 'published'; const writes = [];
+  const { root } = await browser(t, async (url, options) => { if (options.method) writes.push(url); return { record: structuredClone(current) }; });
+  await renderStudio(root, '/studio/' + ahuPill.id, () => {});
+  assert.deepEqual(writes, []);
+  assert.equal(root.querySelector('[data-publish-preview]'), null);
+  assert.equal(root.querySelector('[data-edit-preview]').hidden, true);
+  assert.equal(root.querySelector('textarea'), null);
+});
+
+test('preview editing uses the revision returned by source preparation', async t => {
+  let current = record(); const writes = [];
+  const { root } = await browser(t, async (url, options) => {
+    if (options.method) {
+      const body = JSON.parse(options.body); writes.push({ url, body });
+      if (url.endsWith('/prepare-draft')) current = { ...current, revision: 3, documents: [{ ...current.documents[0], draftApplied: true }] };
+      else if (url.endsWith('/save')) current = { ...current, content: body.content, revision: 4 };
+    }
+    return { record: structuredClone(current) };
+  });
+  await renderStudio(root, '/studio/' + ahuPill.id, () => {});
+  root.querySelector('[data-edit-preview]').click();
+  root.querySelector('[name=scope]').value = 'Expert corrected scope';
+  root.querySelector('[data-save-preview]').click();
+  await until(() => root.textContent.includes('Draft saved.'));
+  assert.equal(writes[1].body.revision, 3);
+  assert.equal(writes[1].body.content.pill.scope, 'Expert corrected scope');
+  assert.equal(current.documents[0].blocks[0].text, 'Do not change setpoints.');
+  assert.deepEqual(current.content.sources, []);
+});
+
+test('one preparation request handles multiple extracted documents', async t => {
+  let current = record(), preparations = 0;
+  current.documents.push({ ...structuredClone(current.documents[0]), id: 'DOC-second' });
+  const { root } = await browser(t, async (url, options) => {
+    if (url.endsWith('/prepare-draft')) {
+      preparations++; current.revision++;
+      current.documents.forEach(doc => { doc.draftApplied = true; });
+    }
+    return { record: structuredClone(current) };
+  });
+  await renderStudio(root, '/studio/' + ahuPill.id, () => {});
+  await renderStudio(root, '/studio/' + ahuPill.id, () => {});
+  assert.equal(preparations, 1);
+  assert.ok(root.querySelector('.pill-content-preview'));
+});
+
+test('viewer cannot prepare sources, edit drafts or publish knowledge', async t => {
+  const current = record(); const writes = [];
+  const { root } = await browser(t, async (url, options) => { if (options.method) writes.push(url); return { record: structuredClone(current) }; });
+  globalThis.fetch = async () => ({ ok: true, json: async () => ({ user: { id: 'viewer', roles: ['viewer'] } }) });
+  await sessionRequest('/api/auth/session');
+  globalThis.fetch = async (url, options = {}) => { if (options.method) writes.push(url); return { ok: true, json: async () => ({ record: structuredClone(current) }) }; };
+  await renderStudio(root, '/studio/' + ahuPill.id, () => {});
+  assert.deepEqual(writes, []);
+  assert.equal(root.querySelector('[data-edit-preview]').disabled, true);
+  assert.equal(root.querySelector('[data-publish-preview]').disabled, true);
+  assert.equal(root.querySelector('textarea'), null);
 });

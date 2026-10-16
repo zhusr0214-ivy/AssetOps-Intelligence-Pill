@@ -1,421 +1,285 @@
-# AssetOps Intelligence Pill：当前架构与功能报告
+# AssetOps Intelligence Pill
 
-> 整理日期：2026-10-12  
-> 代码基线：`64636de`，已同步 GitHub `origin/main`（合并 PR #4）<br>
-> 项目阶段：具备受治理知识闭环的本地 MVP  
-> 范围：基于当前代码实现，不将规划功能、模型能力假设或比赛要求视为已实现功能。
+以版本化领域知识包（Pill）为核心的资产运营工作台：把资料与专家经验整理为可发布的知识，在 Case 对话中引用知识，并把新的专家经验转化为可审核的改进方案。
 
-## 1. 项目定位
+> 更新日期：2026-10-16。本文依据 `4df2ddc` 加本地修复后的工作区编写，包含尚未提交的修改。项目阶段为本地 MVP。
 
-AssetOps Intelligence Pill 面向资产运营中的事件处理与专家知识复用。系统把资料和专家经验整理为可审核、可发布、可追溯的 Pill，在事件分析中调用，并根据实际处理结果形成新的知识改进建议。
+## 1. 安装与启动
 
-它不是仅提供回答的聊天机器人，也不是自动控制设备的平台。对话用于收集事实和解释分析；结构化记录、证据校验、人工决策、任务流转和版本管理承担业务闭环。
+要求 **Node.js >=24.0.0**、npm。本轮验证使用 Node.js **24.21.0**。
 
-核心流程：
+在项目根目录安装锁定版本的依赖：
+
+```powershell
+npm ci
+```
+
+首次配置时，从 `.env.example` 创建 `.env`；已有 `.env` 时保留原配置：
+
+```powershell
+if (!(Test-Path .env)) { Copy-Item .env.example .env }
+```
+
+编辑 `.env`，填写模型服务的 HTTPS 地址、密钥及模型名。不要提交 `.env`：
+
+```dotenv
+SOCLAAS_BASE_URL=https://your-provider.example/v1
+SOCLAAS_API_KEY=
+SOCLAAS_MODEL=default
+STORAGE_DRIVER=json
+```
+
+服务通过兼容 Chat Completions 的接口调用模型。未配置模型时仍可保存 Case、编辑草稿，但 Case 智能对话、知识提取及改进分析需要有效的模型配置。配置读取自项目根目录的 `.env`，修改后需重启服务。
+
+**仅首次创建管理员时**，在服务停止、账号库为空的情况下运行；终端会提示输入密码，长度为 12–128 字符：
+
+```powershell
+npm run admin -- bootstrap admin "Administrator"
+```
+
+已有账号无需重复初始化。启动并访问 [本地工作台](http://127.0.0.1:5173)：
+
+```powershell
+npm run dev
+```
+
+`npm start` 使用相同的 `node server.js` 入口。默认地址为 `127.0.0.1:5173`，可使用 `HOST`、`PORT` 覆盖。忘记密码时，先停止服务，再执行 `npm run admin -- reset-password <username>`。
+
+## 2. 当前界面与操作流程
+
+顶层导航按顺序为 **Pill Studio、Pill Library、Case Workspace**，另有 Settings。默认打开 Studio。
+
+| 入口 | 路径 | 当前功能 |
+|---|---|---|
+| Pill Studio | `/studio` | 合并展示普通草稿和 Case 改进方案；按文字、Owner、Source 筛选 |
+| 创建 Pill | `/studio/new` | 上传资料、填写专家经验，或同时提供两者，提取后进入草稿预览 |
+| 草稿预览 | `/studio/:id` | 查看知识内容；有权限的用户可编辑、保存、删除，管理员可发布 |
+| 改进方案 | `/studio/improvements/:caseId/:batchId` | 查看多个 Pill 的改动前后对照、修改正文、接受或排除改动、发布或关闭 |
+| Pill Library | `/library` | 搜索已发布知识，查看生效版本、发布时间及历史版本 |
+| Pill 详情与比较 | `/library/:id`、`/library/:id/compare` | 内容、贡献与发布身份、版本比较及管理员版本操作 |
+| Case Workspace | `/cases`、`/cases/new`、`/cases/:id` | Case 列表、统一事件对话、附件引用、人工决策、专家经验及摘要 |
+| Settings | `/settings` | 账号、退出、修改密码；管理员账号管理 |
+
+当前 Studio 使用内容预览和编辑界面，**不再展示旧版“准备—评测—发布”三阶段标签页**。Case 使用统一对话，底部有 Expert experience confirmation 和 Summary 两个折叠面板；审核决策表单显示在对应的对话消息旁。
+
+兼容路径说明：
+
+- `/`、`/dashboard`、`/overview`、`/learning`、`/governance` 和 `/studio/improvements` 归一到 `/studio`。
+- `/overview/analytics` 归一到 `/studio/analytics`，当前仍显示 Studio 列表，不是独立统计页面。
+- `/studio/new/upload`、`/studio/new/expert` 归一到统一创建入口。
+- 旧 `/incidents`、`/triage/:id`、`/review/:id` 链接映射到 Case 路径；当前页面由统一对话承载，不应把旧链接视为仍有独立 Triage、审核或任务界面的证明。
+
+### 2.1 从资料创建 Pill
 
 ```text
-上传资料 / 录入专家经验
-  → 提取候选知识 → 人工核对 → Pill 草稿
-  → 结构校验 → 模型评测（启用后必须通过）→ 专家审核 → 发布版本
-  → Case 输入与确认 → 匹配 Pill → AI 分析 → 治理检查 → 人工决定
-  → 分派任务 → 实际行动 → 结果验证
-  → 学习建议 → 专家审核与修订 → 纳入新草稿 → 验证并发布新版本
+上传资料 / 填写专家经验
+  → 保存来源并调用 AI 提取
+  → 将已提取来源整理为草稿
+  → 预览知识 → 编辑并保存
+  → 管理员发布 → Library 中的生效版本
 ```
 
-没有匹配 Pill 或知识不足时，系统保留缺口并转交专家，不自动编造经验。人工处理形成的证据仍可进入学习流程。
+- 支持 PDF、DOCX、UTF-8 TXT、Markdown、PNG、JPEG；扫描 PDF 和图片依赖本地 OCR。
+- 创建表单可以同时接收文件和专家经验；提取失败后可重试已有来源，避免重复创建或上传。
+- 上传解析和模型提取在后端是两个步骤；当前创建表单会连续执行它们。
+- 有编辑权限的用户打开草稿时，系统会为尚未应用的已提取来源调用 `prepare-draft`，随后展示草稿预览；已应用来源不会重复追加。
+- 预览以 Scope、Actions、Decision rules、Operating limits 为主；点击 Edit 后可修改内容、增加或移除条目。
+- 来源、候选知识、引用位置、升级条件等信息仍保存在记录中，不是全部都显示在简化编辑器里。
+- 提取不完整时保留来源、已有草稿和问题，不能把模型提取或自动整理等同于人工验证。
 
-## 2. 系统架构
+**当前发布规则：只有管理员可发布。** 发布前执行草稿结构检查，并整理路由及规则—行动关联，生成新的发布快照。普通 Studio 发布记录为 `admin_direct_publication`；现有模型评测结果可保留，但不作为当前发布路径的硬门槛，也不再强制贡献者与发布者分离。
 
-### 2.1 总体架构图
+### 2.2 Case 对话、引用与人工决策
 
-以下 Mermaid 图可在支持 Mermaid 的 Markdown 查看器中渲染。
+```text
+描述事件 / 选择附件提问
+  → 提取并累积事实 → 检索生效 Pill 的相关规则与行动
+  → 验证引用和问题覆盖 → 回答、追问或转交人工
+  → 必要时记录审核决定 / 专家经验
+  → 保存可追溯的对话与摘要
+```
+
+- 系统提取位置、资产、类别、时间、影响、观察、已做行动和受影响范围等字段。
+- 手动字段受保护；新信息与已确认事实冲突时，保留原值并显示 Keep current / Use new value。未解决冲突会阻止服务端最终提交。
+- 兼容 API 中仍有事件摘要编辑和 finalize；当前紧凑对话页不展示独立摘要编辑器或 Confirm & submit 按钮。
+- Case 对话按类别、资产等适用条件筛选已批准 Pill，再按问题与规则、行动的词汇相关性排序，保留关联的前置条件。不是向量检索。
+- 当前对话最多取前 8 个匹配 Pill；保留额外匹配数量。该路径与后端旧版多 Pill Triage 编排的限制不同。
+- 附件可作为回答的引用来源，但不会自动变成已确认 Case 事实，也不能单凭附件证明操作已获 Pill 支持。
+- 区分问题覆盖、操作审批与安全升级。Reviewer / Admin 可记录消息对应的批准、拒绝或升级；安全升级请求仅允许记录升级。
+- 专家答复不等于操作批准；审批记录不等于执行，自动摘要不等于已验证结果或 Case 关闭。
+- 消息失败时保留输入和错误诊断，可重试；请求 ID 用于避免重复消息和重复经验提交。
+
+### 2.3 专家经验生成多 Pill 改进方案
+
+```text
+Case 触发专家请求 → 专家提交经验
+  → 自动建立改进批次并分析当前生效知识
+  → Studio 展示需要更新 / 新建的 Pill
+  → 逐项接受或排除，必要时编辑 After 文本
+  → 管理员发布选定改动，或全部排除后关闭
+```
+
+当前正常提交流程**不需要再点击一次经验确认**。保留 `expert-experience-confirmation` 接口，用于历史记录、重试和兼容处理。
+
+- 提案可修改 Scope、Actions、Decision rules、Operating limits；每项包含改动前后文本、原因及专家原文引用。
+- 一次方案最多 8 个目标，每个目标最多 12 项改动；可以更新现有 Pill，也可提出必要的新 Pill。
+- 每项必须明确接受或排除，不能带着 pending 决策发布；新 Pill 至少需要范围、行动和决策规则。
+- 关联依赖须一起接受并发布；目标版本、修订或可编辑草稿发生变化时，旧方案不能直接发布，需要重新分析。
+- Expert / Admin 可编辑和保存方案；**仅 Admin 可发布**。此路径记录 `admin_batch_review`，不把独立模型评测作为发布门槛。
+- 没有需要修改的内容时标记 `no_changes`，可关闭方案；重新分析会替换当前提案编辑，历史提案保留在记录中。
+- SQLite 模式下，批次发布与 Case 回执通过事务提交；JSON 模式下多个 Pill 的写入在同一次记录替换中完成，Case 回执通过发布凭据重试恢复，不声称具备跨文件事务。
+
+## 3. 角色和权限
+
+账号支持组合角色；以下描述单个角色的主要能力。服务端也会校验权限和登录身份。
+
+| 角色 | 主要权限 |
+|---|---|
+| `viewer` | 读取当前工作区业务信息 |
+| `operator` | Case 录入、消息和附件、兼容 Triage/处理/学习及任务执行接口 |
+| `expert` | 创建和编辑未发布知识、来源提取、提交专家经验、编辑改进方案；不能发布 |
+| `reviewer` | Case 建议的审核与安全升级、兼容人审和任务验证接口；不能发布 Pill 或切换 Library 版本 |
+| `admin` | 全部角色能力、知识及改进批次发布、已发布知识编辑与版本管理、账号和系统管理 |
+
+已发布知识及带有发布历史的草稿仅管理员可编辑；修改已发布版本时先建立新草稿，历史快照保留。管理员可以发布自己参与编写的内容，当前没有强制双人发布审核。
+
+所有账号共享一个业务工作区，没有按租户、楼宇或资产隔离。记录中的 Owner、负责人等文本不等于独立的资源访问控制。Case 决策和发布身份绑定登录账号，不信任前端自报身份。
+
+密码采用加盐 scrypt，会话最长 8 小时，账号变更会撤销对应会话；写请求需要 CSRF token。JSON 会话重启失效，SQLite 会话可跨同机实例共享；备份恢复会清除运行会话。HTTPS 部署应设置 `COOKIE_SECURE=true`。
+
+## 4. 架构与代码入口
+
+Node.js 原生 HTTP 服务同时提供静态前端和 JSON API。前端为 HTML、CSS、原生 JavaScript ES Modules，无 React / Vue。
 
 ```mermaid
-flowchart TB
-    Users[运营人员 / 领域专家 / 审核人 / 执行人员]
-    subgraph UI[前端：HTML + CSS + 原生 JavaScript]
-      Overview[Operations Overview]
-      Cases[Case Workspace]
-      Studio[Pill Studio]
-      Library[Pill Library]
-    end
-    Users --> UI
-    UI --> Auth[登录 / 角色授权 / CSRF / 审计]
-    Auth --> API[Node.js HTTP Server / JSON API]
-    subgraph Business[后端业务服务]
-      Intake[事件录入与会话]
-      Triage[Pill 路由与分析编排]
-      Governance[确定性治理与人审]
-      Tasks[任务与执行证据]
-      Knowledge[知识提取与草稿管理]
-      Evaluation[发布前模型评测]
-      Learning[受治理的学习反馈]
-      Metrics[运营指标与 CSV 导出]
-      Versions[发布版本与回滚]
-    end
-    API --> Business
-    subgraph AI[模型调用层]
-      IA[Case Intake Agent]
-      TA[Domain Triage Agent]
-      CA[Cross-Pill Coordinator Agent]
-      QA[Triage 报告对话模块]
-      KA[Knowledge Capture Agent]
-      LA[Learning and Improvement Agent]
-    end
-    Intake --> IA
-    Triage --> TA
-    Triage --> CA
-    Triage --> QA
-    Knowledge --> KA
-    Learning --> LA
-    Evaluation --> TA
-    AI --> Transport[并发限制 / 超时 / 熔断 / 响应大小限制]
-    Transport --> Provider[SOCLAAS / OpenAI 兼容 Chat Completions API]
-    Business --> Storage[SQLite 或旧 JSON 模式 / 上传原文件]
+flowchart LR
+    UI[Studio / Library / Cases] --> API[HTTP API + 登录 / 权限 / CSRF / 审计]
+    API --> Knowledge[来源解析 / 知识提取 / 草稿与版本]
+    API --> Chat[Case 事实提取 / 知识检索 / 引用与人工决策]
+    API --> Improvement[专家经验 / 多 Pill 改进批次]
+    Knowledge --> Model[模型调用层]
+    Chat --> Model
+    Improvement --> Model
+    API --> Storage[JSON 或 SQLite + 来源原文件]
 ```
 
-### 2.2 技术组成
-
-| 层次 | 当前实现 | 说明 |
+| 模块 | 代码入口 | 职责 |
 |---|---|---|
-| 前端 | HTML、CSS、原生 JavaScript ES Modules | 无 React/Vue；通过前端路由切换工作区 |
-| 服务端 | Node.js 原生 `node:http` | `server.js` 同时提供静态页面和 JSON API；不是独立微服务集群 |
-| 业务逻辑 | 按事件、分析、人审、任务、知识、学习、评测、版本拆分模块 | 在同一服务进程内编排 |
-| 模型接口 | OpenAI 兼容 Chat Completions | 使用 SOCLAAS 环境配置；不需要为每个 Agent 配置不同密钥 |
-| PDF 提取 | `pdfjs-dist` | 读取可搜索文字、保留页码 |
-| DOCX 提取 | `mammoth` | 提取文本；不保证复杂版式还原 |
-| 本地 OCR | Tesseract、Poppler | 可启用的图片/扫描 PDF 文字识别；需安装工具与语言包 |
-| 身份与权限 | `auth.js`、`application.js` | 登录会话、角色校验、CSRF 与账号管理 |
-| 运行控制 | `model-runtime.js`、`runtime.js`、`storage-operations.js` | 进程内并发/熔断、审计、在线及定时备份、停机恢复 |
-| 存储 | SQLite，可保留旧 JSON 兼容模式 | WAL、跨集合事务、修订校验、同机实例租约；来源文件独立保存 |
-| 测试 | Node.js Test Runner、JSDOM | 后端、API、DOM 交互与回归测试 |
+| HTTP / 认证 | `server.js`、`application.js`、`auth.js` | 路由、会话、角色、CSRF、审计和系统管理 |
+| 当前前端 | `public/app.js`、`public/studio.js`、`public/pill-preview.js`、`public/improvements.js`、`public/case-chat.js` | 路由、知识预览、批次审核和统一事件对话 |
+| Case 输入 | `intake-agent.js`、`conversation.js`、`intake.js` | 事实提取、人工字段保护、冲突和消息状态 |
+| Case 智能回答 | `case-conversation-agent.js`、`case-knowledge.js` | 检索相关条目、验证引用及问题级知识覆盖 |
+| 操作与结果边界 | `case-supervision.js`、`case-operation-policy.js`、`case-feedback.js`、`case-records.js` | 人工介入判定、审核记录、摘要、专家经验 |
+| 来源与知识提取 | `document-parser.js`、`ocr.js`、`knowledge-agent.js` | 文本/OCR 解析、来源证据、候选知识和不完整提取恢复 |
+| Pill 与发布 | `pill-studio.js`、`pill-draft.js`、`pill-versions.js` | 草稿、自动整理、结构与路由处理、发布快照和版本比较 |
+| 改进批次 | `improvements.js`、`improvement-plan.js`、`pill-batch.js` | 基于专家经验生成提案、逐项决策、批次发布与恢复 |
+| 模型通信 | `model-runtime.js`、`config.js` | 服务端配置、并发限制、超时、熔断及响应大小限制 |
+| 存储与运行 | `incident-store.js`、`database.js`、`runtime.js`、`storage-operations.js` | 修订校验、事务、备份、迁移、实例协调和停机恢复 |
 
-运行要求为 Node.js `>=24.0.0`（本机验证 24.14.1，内置 SQLite 可能显示实验性提示）。常用命令为 `npm run dev`、`npm test`；默认监听 `127.0.0.1:5173`，可通过 `HOST`、`PORT` 配置。
+模型驱动部分包括事实提取、Case 回答、知识提取、专家访谈、领域 Triage、跨 Pill 协调、学习及改进方案生成。它们是后端函数和提示词封装，不是独立运行的自治服务。治理、引用检查、权限和状态校验主要由确定性代码完成。
 
-### 2.3 外部服务边界
+### 保留的后端能力与兼容模块
 
-- 模型请求只从后端发出，前端不持有 API Key。
-- 配置项包括 `SOCLAAS_BASE_URL`、`SOCLAAS_API_KEY`、`SOCLAAS_MODEL`；本报告不包含密钥。
-- 保留 TLS 证书验证，不能通过关闭验证解决证书问题。
-- 原始资料文字、Case 事实及相关上下文可能被发送给配置的模型服务，真实业务使用前需确认数据授权。
-- 当前没有向量数据库、嵌入检索、独立消息队列或通用 Agent 自治框架。
+以下实现仍在仓库和 API 中，但不是当前主导航中的独立工作区：
 
-## 3. Agent 与确定性模块
+- 多 Pill Triage、报告历史和报告问答，领域规则与引用校验，以及跨 Pill 冲突/依赖协调。
+- 正式人审、任务分派、执行证据、结果验证、学习建议审核与导入。
+- 模型评测、重复试验、候选与基准比较、专家复核及专家示例工作流。
+- 运营指标、版本表现和 CSV 导出。
 
-### 3.1 模型驱动的角色
+对应模块包括 `triage.js`、`triage-agent.js`、`coordination-agent.js`、`review.js`、`tasks.js`、`learning.js`、`pill-evaluation.js`、`expert-workflow.js` 和 `operations-metrics.js`。这些能力不能据此描述为当前页面已暴露完整入口，也不能把旧评测规则当成当前管理员直接发布的规则。
 
-严格按实现区分，当前有 **5 类核心 LLM Agent，加 1 个模型驱动的报告对话模块**。它们是后端函数和提示词封装，不是独立部署的微服务。
+## 5. 数据、配置与恢复
 
-| 角色 | 代码入口 | 输入 | 输出与职责 | 权限边界 |
-|---|---|---|---|---|
-| Case Intake Agent | `intake-agent.js`：`createIntakeAgent` | 用户消息、现有事件字段和会话上下文 | 提取事件事实、识别更新；后端组织追问和就绪判断 | 不自行确认最终 Case；优先级由用户设置 |
-| Knowledge Capture Agent | `knowledge-agent.js`：`createKnowledgeCaptureAgent` | 资料文本块、来源位置、保存的领域 | 提取范围、规则、行动、边界、升级条件、示例和缺失信息 | 候选内容必须人工核对，不能直接发布 |
-| Domain Triage Agent | `triage-agent.js`：`createTriageAgent` | 确认后的 Case 快照、选中的 Pill | 提出可能原因，引用事实，选择规则及行动 ID，指出缺失信息 | 不能任意生成并执行新行动；行动正文取自 Pill 目录 |
-| Cross-Pill Coordinator Agent | `coordination-agent.js`：`createCoordinationAgent` | 已验证的多领域报告和候选行动 | 识别潜在冲突、前置关系、待确认问题，生成建议顺序 | 行动 ID 与依赖环由后端验证；不能批准或执行 |
-| Learning & Improvement Agent | `learning-agent.js`：`createLearningAgent` | 实际行动、验证结果、人审意见、分析记录及任务证据 | 区分知识问题、输入问题、Agent 问题和执行偏差，提出改进建议 | 不自动修改或发布 Pill；知识变化须经过专家审核 |
-| Triage 报告对话模块 | `triage-agent.js`：`createTriageChat` | 选定报告、Case 和对话历史 | 回答针对该报告的依据、规则及建议的问题 | 不是新的行动授权；不能修改 Case、批准计划或执行设备操作 |
+默认存储模式为 **JSON**，SQLite 需要显式迁移后启用。
 
-多 Pill 场景针对不同 Pill **分别调用同一个 Domain Triage Agent 实现**。全部成功后自动进行一次协调检查；协调失败保留专家报告，但阻断批准。属于有界分析编排，不是自由协商或自动执行。
-
-### 3.2 Governance Agent 的实际实现
-
-产品概念中的 Governance Agent，目前主要由 `review.js` 的 `governancePackage()` 承担，是**确定性治理模块**，不单独请求大模型。
-
-已经检查的内容包括：
-
-- Case 事实是否与报告快照一致，事件是否仍处于已确认状态。
-- 当前适用的 Pill 及版本是否与报告一致。
-- 报告是否完整，是否存在缺失信息、未解决冲突或待处理消息。
-- 规则 ID、证据引用和行动 ID 是否通过校验。
-- 行动内容是否与 Pill 目录一致，是否需要审批。
-- 多 Pill 是否存在已声明的行动冲突，是否需要人工协调。
-- 将阻断项、警告、边界和待审核行动整理为审核包。
-
-它不能证明诊断正确、自动判断所有工程风险，也不是法规合规认证工具。
-
-### 3.3 其他非 LLM 模块
-
-| 模块 | 文件 | 当前职责 |
+| 数据 | JSON 模式 | SQLite 模式 |
 |---|---|---|
-| 会话状态与输入检查 | `conversation.js`、`intake.js` | 字段合并、人工修改保护、冲突确认、重试与提交检查 |
-| Pill 路由与协作 | `pill-routing.js` | 按条件选择 Pill，给规则和行动加来源标识，检查显式冲突 |
-| 分析结果验证 | `triage.js` | 验证引用与目录边界，保存分析状态和来源快照 |
-| 资料解析与合并 | `document-parser.js`、`knowledge-merge.js` | 提取文字、保留引用位置、合并已审核知识 |
-| 发布前评测 | `pill-evaluation.js` | 复用 Triage Agent，按测试预期比较草稿和生效版本 |
-| 任务管理 | `tasks.js` | 分派、进度、升级、证据提交、结果验证与提醒 |
-| 版本治理 | `pill-studio.js`、`pill-versions.js` | 草稿、发布快照、版本比较、激活、停用与回滚 |
-| 统计 | `operations-metrics.js` | 明确口径的指标、筛选、月度案例分组和 CSV 导出 |
+| Case、消息、专家经验、改进批次 | `data/incidents.json` | `data/assetops.sqlite` |
+| Pill 草稿、发布版本、来源记录 | `data/pills.json` | `data/assetops.sqlite` |
+| 账号 | `data/users.json` | `data/assetops.sqlite` |
+| Pill 上传原文件 | `data/pills.json.uploads/` | 同左 |
+| 请求审计 | `data/audit/` | 同左 |
+| 备份 | `backups/`，停机 CLI | `backups/`，支持在线及定时备份 |
 
-## 4. 当前前端工作区
+SQLite 使用 WAL、事务、修订校验和同机实例租约；JSON 为单进程兼容模式。文件和审计不属于 SQL 原子事务。种子知识在 `pills/ahu-cooling.json`，初始示例不能视作已经批准的工程 SOP。
 
-现在的顶层导航是 **4 个业务工作区，加 Account & System 设置入口**。AI 分析、人审、任务和结果记录围绕同一个 Case 展开。
+停止全部实例后，迁移并在 `.env` 中设置 `STORAGE_DRIVER=sqlite`：
 
-| 工作区 | 主要路径 | 包含能力 |
-|---|---|---|
-| Operations Overview | `/overview` | 数量概览、待审事项、运营指标、提醒、知识缺口、版本表现、筛选与导出 |
-| Case Workspace | `/cases`、`/cases/:id` | 事件会话、事实确认、AI Triage、人审、任务、实际行动与结果 |
-| Pill Studio | `/studio` | 文件上传、人工经验录入、候选知识审核、草稿编辑、结构校验、模型评测和专家发布 |
-| Pill Library | `/library` | 已发布知识、适用范围、来源、版本比较、历史版本管理与回滚 |
+```powershell
+npm run admin -- migrate-sqlite
+```
 
-重要子页面包括：
+迁移前自动备份并保留原 JSON。数据库已存在时禁止误以 JSON 模式启动；SQLite 模式不支持自定义 `DATA_FILE`、`PILL_DATA_FILE`。
 
-- `/cases/:id/triage`：该事件的分析、证据、报告历史和报告对话。
-- `/cases/:id/review`：治理检查结果和人工决定。
-- `/cases/:id/tasks`：单个 Case 的任务流转。
-- `/cases/tasks`：跨 Case 任务队列。
-- `/cases/:id/handling`：实际行动、结果验证与学习分析入口。
-- `/studio/improvements`：学习改进建议的审核和草稿导入。
-- `/library/:id/compare`：同一个 Pill 的版本内容比较。
+常用停机管理命令：
 
-## 5. Pill 的数据结构和使用方式
+```powershell
+npm run admin -- backup
+npm run admin -- restore "<backup-directory>" --confirm
+```
 
-Pill 不是一个独立聊天 Agent，也不是单纯的资料附件。当前实现可理解为**受治理的领域知识包**。
+恢复会校验备份路径、大小和摘要，并保留原数据目录。SQLite 的在线备份通过管理员接口触发，也可由应用进程定时执行，默认每 360 分钟一次、保留 7 份；对应 `BACKUP_INTERVAL_MINUTES`、`BACKUP_KEEP`。
 
-| 内容 | 作用 |
+OCR 默认关闭。启用时设置 `OCR_ENABLED=true`，安装 Tesseract 和 Poppler，并配置 `OCR_LANGUAGE`；工具不在 PATH 时设置 `TESSERACT_PATH`、`PDFTOPPM_PATH`。
+
+解析限制：单文件 10 MB、PDF 最多 100 页、提取文字最多 60,000 字符；每次 OCR 最多 5 个扫描页。Case 最多 5 个附件，累计提取文字最多 120,000 字符。复杂表格、图纸含义和 OCR 数值仍需人工核对。
+
+运行时提供模型并发限制、熔断、请求审计及 `/healthz`。备份未加密且未异地复制，审计不防篡改；定时备份依赖服务进程运行，同机 SQLite 协调不等于跨主机高可用。
+
+`data/`、`backups/`、`node_modules/`、`.env` 已列入忽略规则，勿将真实业务数据或密钥提交到版本库。
+
+## 6. 主要 API
+
+| 用途 | 代表接口 |
 |---|---|
-| `id`、名称、owner、domain | 标识知识包、责任人和领域 |
-| `scope`、`applicability` | 描述适用条件；配置类别、资产前缀、问题关键词 |
-| `rules` | 保存规则 ID、标题、指导内容、解释及关联行动 |
-| `actions` | 保存标准行动、责任角色、审批标记及关联规则 |
-| `coordinationKey` / `coordinationValue` | 可选的共享约束键及建议值，用于显式冲突检查 |
-| `boundaries` | 适用边界和禁止越界内容 |
-| `escalationConditions` | 需要升级处理的条件 |
-| 来源与示例 | 专家经验、文档出处、引用与人工编写的验证示例 |
-| 发布元数据 | 版本、审核人、发布时间、快照校验值及生效状态 |
-| 评测与学习记录 | 独立模型评测证据、已纳入的学习建议和来源追踪 |
+| 登录、会话、密码 | `/api/auth/login`、`/api/auth/session`、`/api/auth/password` |
+| Case 与消息 | `/api/incidents`、`/api/incidents/:id/messages`、`/api/incidents/:id/finalize` |
+| Case 附件 | `/api/incidents/:id/documents`、`/api/incidents/:id/document-questions` |
+| 人工决定与专家经验 | `/api/cases/:id/confirmations`、`/expert-solutions`、`/expert-experience-confirmation`、`/result-summary` |
+| Studio | `/api/studio`、`/api/studio/:id/prepare-draft`、`/save`、`/publish`、`/fork`、`/delete` |
+| 来源提取 | `/api/studio/:id/documents`，以及具体文档的 `/analyze`、`/merge` |
+| 改进批次 | `/api/improvements`、`/api/improvements/:caseId/:batchId`，以及 `/analyze`、`/save`、`/publish`、`/close` |
+| Library | `/api/library`、`/api/library/:id`、`/compare`，以及具体版本的 `/activate`、`/disable`、`/restore` |
+| 兼容分析、人审与任务 | `/api/triage/:id/runs`、`/api/review/:id`、`/api/cases/:id/tasks` |
+| 兼容学习、评测与统计 | `/api/learning`、`/api/studio/:id/evaluate`、`/api/operations`、`/api/operations/export` |
+| 管理 | `/api/admin/users`、`/api/admin/health`、`/api/admin/audit`、`/api/admin/storage`、`/api/admin/storage/backup` |
 
-来源、示例、评测、发布元数据等由 Studio 记录及发布快照保存，并非全部嵌在运行时 `pill` 对象中。
+简写操作共享对应资源的前缀，例如 Case 专家经验接口为 `/api/cases/:id/expert-solutions`，Studio 保存接口为 `/api/studio/:id/save`。写接口通常需要当前 `revision`；批次修订号与 Case 修订号分别校验。登录身份和角色由服务端注入，不能通过请求正文伪造。
 
-当前运行方式是：**确定性条件匹配 → 取出生效 Pill → 将其作为结构化上下文交给模型 → 验证输出**。没有实现向量 RAG，也不是调用外部 Skill 文件；可以借用知识检索增强的概念解释，但不应宣称已具备向量检索系统。
+## 7. 测试与本轮验证
 
-## 6. 已实现功能
+安装完整依赖后运行：
 
-### 6.1 资料与专家经验进入 Pill
+```powershell
+npm test
+```
 
-- 支持上传 PDF、DOCX、UTF-8 TXT、Markdown、PNG 和 JPEG；扫描件和图片需要启用本地 OCR。
-- 支持人工填写专家经验，作为知识来源进入提取流程。
-- 保留原始文件、文本块、页码或段落位置以及引用。
-- 上传解析和 AI 拆解是两个步骤，上传本身不自动消耗模型额度。
-- 提取候选规则、行动、范围、边界、升级条件和示例。
-- 人工选择候选项、编辑内容、确认来源后再合并到草稿。
-- 非 AHU 领域可以配置适用条件，经过审核后发布。
+2026-10-16 本地修复后的全量结果：**575 项测试，574 项通过、0 项失败、1 项跳过**。跳过项是 Windows 沙箱不允许创建符号链接或 junction 的备份测试子项；备份完整性和路径校验测试仍执行。
 
-当前限制包括每个文件最多 10 MB、PDF 最多 100 页、提取文字最多 60,000 字符、每个 Pill 最多 10 个来源文件。新增 PNG/JPEG 上传及可启用的本地 Tesseract OCR，扫描 PDF 通过 Poppler 转图，每次最多识别 5 个扫描页。DOCX 表格保留行列顺序；复杂表格、图纸语义和 OCR 数值仍须人工核对。
+受限环境下若系统临时目录报权限错误，可将测试临时目录改到当前可写工作区；不要指向真实业务数据：
 
-### 6.2 Pill 草稿、审核与发布前评测
+```powershell
+New-Item -ItemType Directory -Force .test-tmp | Out-Null
+$env:TEMP = (Resolve-Path .test-tmp).Path
+$env:TMP = $env:TEMP
+npm test
+```
 
-- 草稿可编辑专家来源、规则、行动、关联关系、边界、示例和路由条件。
-- 结构校验检查必填内容、ID 唯一性、规则与行动双向引用以及示例引用。
-- 专家可以批准发布或退回修改；保存编辑会使此前的结构校验失效。
-- 独立模型评测支持 2–8 个测试案例，必须包含支持案例和反例或信息缺口案例。
-- 对草稿和当前生效版本使用同一测试集，检查预期状态、规则、行动和缺失字段。
-- 模型调用失败或证据验证失败会记为失败，不用模拟结果替代。
-- 每个案例支持 1–5 次重复试验，保存每次结果、错误、耗时和结构化输出差异；展示通过率、描述性 Wilson 区间及案例覆盖，区分规则检查与实际模型试验。
-- 候选与基准交替执行，逐案例比较通过率。模型或验证错误、基准错误及观察到的退步均阻止通过。
-- 支持独立专家复核：记录操作范围、限制、专业背景、依据、意见和登录身份；贡献者及本次评测发起人不能审核。专业资质为声明信息，不是第三方认证。
-- 保留评测历史、基准、模型、提示词版本及评测策略；发布快照包含专家复核。
-- 启用评测后，当前草稿必须通过评测才能发布；配置要求专家复核时，还须独立批准。内容、测试集、策略或生效基准变化后，旧结果失效。
-- 新界面默认建议每例 3 次及专家复核，保存策略后生效；旧记录未配置时保留每例 1 次及原发布规则。低于 100% 的阈值必须开启专家复核。
+本轮修复覆盖：
 
-**兼容性说明：旧 Pill 未启用评测时仍保留原有人工发布流程，并明确标记未评测。不是所有历史知识都已经通过模型评测。**
+- 手动时间、标题、位置、设备、观察和受影响范围的保护与冲突处理。
+- 对话中保留或采用新值，以及服务端阻止未解决冲突的最终提交。
+- 消息关联的审核和安全升级入口。
+- 旧学习入口归一到 Studio。
+- 当前 Studio 来源整理、失败重试、修订传递及权限测试；发布权限和中文报告证据测试同步到当前实现。
 
-### 6.3 事件录入与确认
+自动化测试使用临时数据和模拟模型响应；本轮未启动浏览器验收、未调用真实模型、未执行真实设备或外部工单操作。`npm run check:llm`、`check:triage`、`check:knowledge` 是另行执行的模型检查脚本，需要真实服务配置，不能用上述测试通过结果代替连通性和业务质量验证。
 
-- 用户通过对话描述事件，系统提取并累积事实。
-- 主要字段包括标题、描述、位置、资产、类别、时间、影响、观察、已做行动、受影响范围及优先级。
-- 用户可人工编辑摘要、确认冲突和补充信息。
-- 优先级由用户设置；AI 的优先级建议不会自动覆盖它。
-- 消息和事件记录持久化；失败消息可重试，并防止重复追加。
-- 已确认且没有未解决输入问题的 Case 才能进入分析。
+## 8. 实现边界与补充文档
 
-### 6.4 多 Pill 选择、分析与协作
+当前没有实时 BMS / IoT 资产接入、外部工单双向同步、向量索引、租户隔离、跨主机集群或自主设备操作。词汇匹配、引用检查和结构校验不能证明工程诊断正确，专家经验和自动摘要也不能证明操作已执行或结果已验证。
 
-- 每个 Pill 独立管理生效版本，多个不同 Pill 可以同时生效。
-- 按事件类别、资产前缀和问题关键词匹配，保留匹配理由。
-- 每个已配置的匹配维度都须满足；同一列表内满足一个值即可。
-- 最多选择 5 个匹配 Pill。超过限制时要求收窄条件，不静默丢弃。
-- 各 Pill 分别分析同一 Case 快照，再汇总为一份报告。
-- 相同规则或行动 ID 会加上 Pill 标识，避免跨包混淆。
-- 保存各分析结果和原始 Pill 版本，支持来源追溯。
-- 显式冲突会被标记；多 Pill 批准必须填写协调说明和负责人。
-- 任一分析失败会形成不完整报告，阻止直接批准整份计划，可交由专家处理。
+当前准确定位是：**以版本化领域知识为核心，结合模型辅助回答、人工决策与可追溯知识改进的资产运营工作台 MVP。**
 
-**边界：关键词仍是字面匹配；声明式冲突检查之外新增模型辅助的语义冲突与依赖建议，但不保证识别所有冲突。没有跨 Agent 自由协商或设备自主执行。**
-
-### 6.5 AI Triage 和报告对话
-
-- 输出可能原因、事实引用、关联规则、标准检查行动、不确定性及补充问题。
-- 核验规则和行动是否存在、引用是否来自 Case、行动是否与规则关联。
-- 区分无适用 Pill、知识缺口、缺少信息、分析失败及部分分析失败。
-- 保存报告历史和 Case 快照；事实发生变化后旧报告标记失效。
-- 用户可针对报告继续提问，但回答不构成执行授权。
-- Triage 提示词版本更新为 `domain-triage-v11-relevant-components`，要求缺失信息和部件提示与当前 Case/Pill 相关，避免把阀门、水流提示套用到无关的滤网事件。
-- 后端对摘要、原因解释、不确定性和优先级理由增加针对性检查：Case 字段和 Pill 均未提及阀门/水流时，拒绝包含这些主题的报告。报告对话也加入相关性提示，但没有相同的结构化输出校验。
-
-相关性检查基于有限的中英文词形，并检查整个 Pill 内容，而非只检查已选规则；它不能识别所有无关部件、同义表达或跨规则误用，不代表完整的语义验证。
-
-引用和目录校验只能降低错误风险，不能证明工程诊断正确；对话回答也不是经过全面语义验证的结论。
-
-### 6.6 人工审查
-
-- 集中展示关键结论、治理警告、阻断项及行动决策。
-- 审核人可对每个建议行动选择接受或省略，并说明原因。
-- 支持批准、修改后批准、请求补充信息、重新分析、升级专家或拒绝。
-- 新提出的行动保留为待验证建议，不自动加入已批准计划。
-- 多 Pill 冲突行动不能同时获批，须人工取舍或升级。
-- 人审意见和历史决定会保留，并可成为学习输入。
-
-### 6.7 任务流转
-
-- 从有效的人审计划分派标准行动，或建立专家升级任务。
-- 支持负责人、截止日期、重新分派、阻塞、取消及重开。
-- 支持 0–99% 进度记录，只有结果验证后才记为完成和 100%。
-- 开始任务前再次检查授权是否仍然有效。
-- 提交执行证据必须引用 Case 中的实际行动记录。
-- 完成验证必须引用发生于行动之后的已验证结果。
-- 支持升级到指定负责人及明确签收，保存事件历史。
-- 已完成任务引用的证据被纠正或缺失时，会提示复核；历史完成记录不被抹除。
-- 站内提醒包括逾期、即将到期、阻塞、待验证、待签收和证据纠正。
-- 支持关联外部工单编号及 HTTPS 链接。
-- 实际行动与验证结果的证据选择器显示编号和短摘要，选中后展示完整文字及时间；提交仍使用原始记录 ID，不因标题截断改变证据引用。长文本预览会换行并安全显示。
-
-任务完成不等于 Case 已解决。提醒在页面读取时计算；没有后台定时邮件、消息推送或第三方工单双向同步。操作人绑定登录账号，负责人仍是业务文本标签。任务开始前检查协调器提出的前置任务是否完成并具有有效证据，任务验证需要 reviewer 权限。
-
-### 6.8 实际行动、结果与学习反馈
-
-- 分别记录实际行动、理由、与批准计划的偏差，以及结果与验证证据。
-- 记录采用追加方式，纠正关联原记录，而不是覆盖事实历史。
-- 明确区分人工批准、实际执行和验证结果，不能从批准推断执行。
-- 学习建议可分流为补充证据、Agent 改进、更新 Pill、新建 Pill 或无需修改。
-- 知识建议须引用当前行动与验证结果，并提供适用条件、限制及正反验证案例。
-- 专家可接受、拒绝或要求更多信息；接受时可修改建议正文。
-- 接受和导入前重新检查证据，新事实或结果纠正会阻断旧建议继续进入知识流程。
-- 多 Pill 案例必须选择需要改进的原始 Pill，不把临时汇总包发布为新知识。
-- 导入后仍需确认如何纳入规则与示例，再完成验证、审核和发布。
-
-### 6.9 Library 与版本治理
-
-- 保存发布内容、来源、验证、学习记录、审核说明及评测快照。
-- 按规则和行动 ID 对齐比较，展示版本差异。
-- 支持查看历史版本、激活旧版本、停用非生效版本及恢复可用状态。
-- 回滚只切换该 Pill 的生效版本，不改写历史 Case 报告，不删除后续版本。
-- 回滚后再次发布仍生成新版本号，不复用旧版本号。
-- SHA-256 校验用于发现快照意外变化，不能替代防篡改审计或权限系统。
-
-### 6.10 运营统计
-
-| 指标或功能 | 当前口径 |
-|---|---|
-| 知识复用率 | 使用了也被其他 Case 使用的已发布 Pill 的 Case 数 / 使用已发布 Pill 的 Case 数；同一 Case 重跑不算跨案例复用 |
-| 人工纠正率 | 最新人审包含部分支持、不支持、省略行动或修订建议的 Case 数 / 有人审记录的 Case 数 |
-| 知识缺口率 | 最新报告为无适用 Pill 或知识缺口的 Case 数 / 已分析 Case 数 |
-| 处理时长 | 当前已解决且有验证结果的 Case，从创建到结果发生时间的中位小时数；无效时间不纳入 |
-| 版本表现 | 案例量、分析完成率、人审纠正情况、已解决案例量及观察到的处理时长 |
-| 筛选 | UTC 创建日期范围、资产名称片段、类别 |
-| 月度趋势 | 按创建月份分组，展示该组 Case 的当前处理结果，不是历史快照 |
-| 导出 | CSV 与已应用筛选一致，包含口径和样本量，并防护常见表格公式注入 |
-
-空样本显示无数据，不生成虚构绩效。多 Pill 的共同结果不能直接归因于某个 Pill，版本间差异也不是因果意义上的改进证明。
-
-### 6.11 用户、权限与职责分离
-
-- `/settings` 提供账号信息、退出和修改密码；管理员可新增账号、分配角色、停用账号及重置密码。
-- 支持 `admin`、`operator`、`expert`、`reviewer`、`viewer`，可组合分配；服务端强制检查角色，而非只隐藏按钮。
-- 新增审核与操作身份绑定登录账号，历史自报身份不自动变为已认证。
-- 同一草稿的贡献者不能批准发布，管理员也不能绕过；旧草稿可能缺少完整的贡献者历史。
-- 密码使用加盐 scrypt；会话最长 8 小时，账号变更撤销会话；变更需要 CSRF token。JSON 会话重启失效；SQLite 跨实例共享会话及登录限流，重启后可继续，备份和恢复清除会话。
-- 首个管理员通过停机 CLI 初始化，不提供默认密码或公开注册；所有账号仍共享单一业务工作区，不具备租户或资产级隔离。
-
-### 6.12 运行保障与恢复
-
-- 每个进程内的模型调用共享 3 个并发额度、1 MB 响应上限和超时限制；连续 3 次传输/429/5xx 失败触发 30 秒熔断。
-- 每进程 HTTP 活跃请求上限为 12；过载或停机期间返回 503。优雅停机等待请求、审计及正在执行的备份，再关闭数据库并释放锁或实例登记。
-- `/healthz` 提供最小存活状态；管理员可查看配置状态、模型计数和最近审计。配置存在不代表真实模型连通测试成功。
-- 审计按日记录请求 ID、账号、路径、状态与耗时，不记录请求正文或密钥；操作前审计写入失败会阻止处理，操作后失败不能撤销已提交的业务变化。
-- 停机 CLI 支持备份及恢复，恢复前校验路径、文件大小和 SHA-256，并保留原目录。备份包含账号哈希、业务记录和原文件，但不包含 `.env` 或审计日志。
-- SQLite 模式新增在线备份、管理员手动触发及定时任务，默认每 360 分钟、保留 7 份；快照与其引用的原文件一起生成校验清单，不包含登录会话。
-- 定时任务依赖应用进程运行；备份未加密、未异地复制，审计不防篡改。多实例仅限同机共享本地 SQLite，不是跨主机集群或高可用。
-
-## 7. 数据存储和追溯
-
-| 数据对象 | 保存位置或归属 | 主要内容 |
-|---|---|---|
-| Case | 默认 `data/incidents.json` | 字段、消息、修订号、分析报告、人审、任务、实际记录和学习运行 |
-| Pill Studio 记录 | 默认 `data/pills.json` | 草稿、来源、发布版本、评测、学习导入及操作历史 |
-| 上传资料 | Pill 数据文件对应的 `.uploads` 目录 | 原文件，配合来源记录定位引用 |
-| 账号 | `data/users.json` | 账号、角色、停用状态、密码盐与哈希，不保存明文密码 |
-| 请求审计 | `data/audit/` | 按日保存请求阶段、操作账号、状态和耗时 |
-| 离线备份 | `backups/<timestamp>/` | 业务文件、账号和来源原文件，以及摘要清单 |
-| 种子知识 | `pills/ahu-cooling.json` | 项目编写的 AHU 示例知识，初始状态不是已批准工程 SOP |
-
-以上路径为 JSON 兼容模式。显式迁移后，Case、Pill 和账号统一保存到 `data/assetops.sqlite`；来源为 `data/pills.json.uploads`，审计为 `data/audit/`。JSON 模式支持 `DATA_FILE` 和 `PILL_DATA_FILE`；SQLite 模式拒绝这两个自定义路径。实际数据和 `.env` 不随代码提交。
-
-SQLite 使用 WAL、完整同步及集合修订校验，在提交时执行事务。学习导入的 Pill 更新与 Case 回执一起提交或回滚；人审、学习审核及任务变更所依赖的 Pill 修订也纳入事务。长时间模型调用不占用写锁。
-
-同机实例共享会话和登录限流；Triage、资料分析、评测及备份使用带续期的租约，过期持有者不能提交业务写入。实体仍以 JSON 保存于 SQL 表，集合级冲突要求刷新重试，不是高吞吐规范化查询模型。上传文件和审计不属于 SQL 原子事务。
-
-旧 JSON 模式仍为单进程，不新增跨文件事务。迁移前自动备份并保留原 JSON；数据库存在时禁止误用 JSON 模式写入旧数据。恢复需停机，校验摘要并保留旧目录。详见 [数据与评测操作指南](docs/data-and-evaluation.md)。
-
-## 8. 主要 API 与代码入口
-
-| 能力 | 代表接口 | 主要后端文件 |
-|---|---|---|
-| Case 与输入 | `/api/incidents`、`/api/intake/analyze` | `server.js`、`incident-store.js`、`conversation.js` |
-| Triage | `/api/triage/:id/runs`、`/api/triage/:id/reports/:reportId/chat` | `triage.js`、`triage-agent.js` |
-| 人审 | `/api/review/:id` | `review.js` |
-| 任务 | `/api/tasks`、`/api/cases/:id/tasks`、`/api/cases/:id/tasks/:taskId` | `tasks.js` |
-| 行动与学习 | `/api/cases/:id/handling`、`/api/cases/:id/learning` | `learning.js`、`learning-agent.js` |
-| 学习审核与导入 | `/api/learning/:caseId/:runId/:proposalId/review`、对应的 `/apply` | `learning.js`、`pill-studio.js` |
-| Studio | `/api/studio/:id/save`、`/validate`、`/submit`、`/publish` | `pill-studio.js` |
-| 资料提取 | `/api/studio/:id/documents` 及具体文档的 `/analyze`、`/merge` | `document-parser.js`、`knowledge-agent.js` |
-| 模型评测与复核 | `/api/studio/:id/save-evaluations`、`/evaluate`、`/review-evaluation` | `pill-evaluation.js`、`pill-studio.js` |
-| 版本 | `/api/library/:id`、`/compare`、具体版本的 `/activate`、`/disable`、`/restore` | `pill-versions.js`、`pill-studio.js` |
-| 统计 | `/api/operations`、`/api/operations/export` | `operations-metrics.js` |
-| 登录与账号 | `/api/auth/session`、`/login`、`/logout`、`/password` | `auth.js`、`application.js` |
-| 系统管理 | `/api/admin/users`、`/api/admin/health`、`/api/admin/audit` | `application.js`、`runtime.js` |
-| 跨 Pill 协调 | 多 Pill Triage 成功后内部调用，无独立执行接口 | `coordination-agent.js`、`triage.js` |
-| 本地 OCR | 资料上传解析流程内部调用 | `ocr.js`、`document-parser.js` |
-| 备份恢复及迁移 | `npm run admin -- backup`、`restore <目录> --confirm`、`migrate-sqlite` | `scripts/admin.js`、`storage-operations.js`、`runtime.js` |
-| 数据库管理 | `/api/admin/storage`、`/api/admin/storage/backup` | `application.js`、`database.js` |
-
-接口路径为索引，不替代字段协议；更新接口通常需要当前 revision，以及对应的人工确认和操作说明。
-
-## 9. 验证状态与实现边界
-
-### 9.1 已有验证
-
-- 基于 `64636de` 的本地数据与评测更新，完整自动化测试：**249 项通过，0 项失败**，新增 16 项。
-- 新增覆盖跨集合回滚、独立进程冲突、租约失效、共享会话和限流、迁移保留原数据、备份恢复、定时保留策略、重复试验及独立专家复核。
-- 本次新增回归覆盖无关阀门/水流提示，以及证据短标题、完整预览、内容转义和原始记录 ID 提交。
-- 覆盖后端规则、证据校验、持久化、并发冲突、版本切换、API 和 JSDOM 页面交互。
-- 覆盖多 Pill 冲突、评测发布检查、任务证据、学习证据过期及统计导出等回归场景。
-- 用户反馈队友已完成验收与修复；此处不把该反馈等同于本报告另行执行的线上验收。
-- 自动化测试使用临时数据及模拟模型服务，不证明真实模型在所有场景中正确。
-- 本次同步检查未启动网页预览、未调用真实模型，未执行设备或工单操作。上一轮曾用合成图片与扫描 PDF 完成本机 OCR 实测及临时目录备份恢复验证；本次未重复这些外部工具实测。
-
-### 9.2 未实现或仍需生产化的部分
-
-| 方向 | 当前边界 |
-|---|---|
-| 数据基础设施 | SQLite、跨集合事务、同机实例协调及定时备份已实现，需显式迁移。无跨主机集群、异地备份、高可用或持久任务队列；文件及审计不参与 SQL 事务 |
-| 真实业务集成 | 无 BMS、IoT 实时资产数据、外部工单创建与双向同步 |
-| 通知 | 无后台定时邮件、企业消息推送及自动超时升级服务 |
-| 评测深度 | 已有重复试验、描述性统计、基准退步检查及独立专家复核；仍是有限案例观察，未证明样本独立性，无第三方专业资质认证或全领域安全证明 |
-| 检索 | 无向量索引、Embedding 检索及语义召回排序 |
-
-启动、权限矩阵、OCR 配置和备份恢复说明见 [security-and-operations.md](docs/security-and-operations.md)。本次同步未迁移或覆盖 `.env` 和真实业务数据。
-
-### 9.3 本次同步检查
-
-- 本地 `main` 从 `5fabb17` 快进到 `64636de`，与本次获取的 `origin/main` 一致，无合并冲突。
-- 已检查队友提交 `ccc6013` 的 5 个变更文件，包括提示词、后端校验、任务界面、样式和回归测试。
-- 本次差异检查与自动化测试未发现阻断性问题；不是对全部代码的安全审计或真实模型质量保证。
-- 保留报告迁移到项目根目录的本地变更；同步更新本文件与 README。此次报告更新尚未提交或推送。
-
-## 10. 总结
-
-当前系统已实现从知识来源到 Pill 发布、从事件分析到人工处理、再从处理结果回到知识更新的核心软件流程，并补充了多 Pill 编排、任务流转、版本治理、模型评测和运营指标。
-
-对外准确的描述是：**一个以版本化领域知识包为核心、由多个模型角色辅助、由确定性规则和人工审核控制的资产运营工作台 MVP。**
-
-不应描述为已经获得工程认证、能够自主处理全部领域问题、具备生产级权限和实时集成，或可以自动执行设备操作的系统。
+补充说明见 [Case 对话设计](docs/case-conversation.md)、[数据与评测操作指南](docs/data-and-evaluation.md)、[安全与运维说明](docs/security-and-operations.md)。补充文档包含历史工作流说明；当前导航、发布权限和发布门槛以本 README 及现有 `public/app.js`、`auth.js`、`pill-studio.js`、`pill-batch.js` 的实现为准。

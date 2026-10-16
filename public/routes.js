@@ -5,7 +5,7 @@ export function canonicalPath(path) {
   if (clean === '/governance') return '/studio';
   if (clean === '/studio/improvements') return '/studio';
   if (clean === '/studio/new/upload' || clean === '/studio/new/expert') return '/studio/new';
-  if (clean === '/learning') return '/studio/improvements';
+  if (clean === '/learning') return '/studio';
   if (clean === '/incidents') return '/cases';
   if (clean.startsWith('/incidents/')) return clean.replace('/incidents/', '/cases/');
   for (const stage of ['triage', 'review']) {

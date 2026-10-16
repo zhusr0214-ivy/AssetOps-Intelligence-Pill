@@ -143,6 +143,26 @@ test('safety request exposes escalation only and experts cannot approve recommen
   assert.doesNotMatch(supervisionMarkup(current), /<form/);
 });
 
+for (const choice of ['current', 'proposed']) test(`conflicting facts stay visible in chat and can keep the ${choice} value`, async t => {
+  const current = incident(); let submitted;
+  current.conflicts = [{ field: 'location', current: 'Level 2', proposed: 'Level 3' }];
+  const { root } = await browser(t, (url, options) => {
+    if (options.method === 'PATCH') {
+      assert.equal(url, '/api/incidents/C1');
+      submitted = JSON.parse(options.body);
+      current.location = submitted.location; current.conflicts = []; current.revision++;
+    }
+    return { incident: current };
+  });
+  await renderCaseChat(root, { id: 'C1' }, () => {});
+  assert.match(root.querySelector('.message-log .field-conflict').textContent, /Level 2.*Level 3/);
+  root.querySelector(`[data-conflict][data-choice="${choice}"]`).click();
+  await until(() => !root.querySelector('[data-conflict]'));
+  assert.equal(submitted.location, choice === 'current' ? 'Level 2' : 'Level 3');
+  assert.equal(submitted.revision, 3);
+  assert.equal(current.conflicts.length, 0);
+});
+
 test('case list shares the heading left edge instead of a centered fixed-width column', () => {
   const css = readFileSync(new URL('../public/styles.css', import.meta.url), 'utf8');
   assert.match(css, /\.case-conversations\s*\{[^}]*max-width:\s*none;[^}]*margin-inline:\s*0;/);

@@ -125,7 +125,7 @@ for (const sqlite of [false, true]) test(`expert solution enters an idempotent g
   await assert.rejects(records.expertSolution(incident.id, { ...body, solution: 'Changed solution' }), { status: 409 });
 });
 
-test('expert update preserves published snapshot and requires incorporation plus independent publication review', async t => {
+test('expert update preserves published snapshot and only an administrator can release the new draft', async t => {
   const { records, store, studio, incident } = await setup(t);
   let r = await studio.get(ahuPill.id);
   const content = structuredClone(r.content);
@@ -143,8 +143,13 @@ test('expert update preserves published snapshot and requires incorporation plus
   const draft = await studio.get(saved.expertSolutions[0].pillDraftId);
   assert.deepEqual(draft.releases, original);
   assert.equal((await studio.runtimePills())[0].version, original[0].pill.version);
-  await assert.rejects(studio.change(draft.id, 'publish', { revision: draft.revision, reviewer: 'Other', authenticatedActor: { id: 'reviewer-2', name: 'Other' }, notes: 'Attempt', expertConfirmed: true }), /incorporated/);
+  await assert.rejects(studio.change(draft.id, 'publish', { revision: draft.revision, reviewer: 'Other', authenticatedActor: { id: 'reviewer-2', name: 'Other' }, authenticatedRoles: ['reviewer'], notes: 'Attempt', expertConfirmed: true }), { status: 403 });
   await assert.rejects(studio.change(draft.id, 'publish', { revision: draft.revision, reviewer: who.name, authenticatedActor: who, notes: 'Attempt', expertConfirmed: true }), { status: 403 });
+  const published = await studio.change(draft.id, 'publish', { revision: draft.revision, ...auth });
+  assert.deepEqual(published.releases[0].pill, original[0].pill);
+  assert.equal(published.releases.length, original.length + 1);
+  assert.equal(published.releases.at(-1).actorId, 'admin1');
+  assert.equal(published.releases.at(-1).evaluation.method, 'admin_direct_publication');
 });
 
 test('failed JSON draft import preserves solution and retry recovers without duplication', async t => {

@@ -1,6 +1,6 @@
 import { api, labels, categories, options, escapeHtml as e, details } from './incidents.js';
 import { attachmentMarkup, documentMessagesMarkup, uploadCaseFile, compactComposer } from './case-attachments.js';
-import { expertMarkup } from './case-records.js';
+import { expertMarkup, supervisionMarkup } from './case-records.js';
 
 export function visibleAssistantText(message, incident) {
   if (message.role !== 'assistant') return message.content;
@@ -10,9 +10,9 @@ export function visibleAssistantText(message, incident) {
 }
 
 
-export function recentMessages(incident) {
+export function recentMessages(incident, supervisionDrafts) {
   const messages = incident.messages || [];
-  const render = items => items.map(message => `<article class="message ${message.role === 'user' ? 'user' : 'assistant'}" aria-label="${message.role === 'user' ? 'You' : 'Assistant'}"><p>${e(visibleAssistantText(message, incident))}</p>${message.role === 'assistant' ? caseReferences(message) : ''}${message.state && message.state !== 'complete' ? `<small>${message.state === 'failed' ? 'Reply failed. Message saved.' : 'Awaiting reply'}</small>` : ''}</article>`).join('');
+  const render = items => items.map(message => `<article class="message ${message.role === 'user' ? 'user' : 'assistant'}" aria-label="${message.role === 'user' ? 'You' : 'Assistant'}"><p>${e(visibleAssistantText(message, incident))}</p>${message.role === 'assistant' ? caseReferences(message) : ''}${message.state && message.state !== 'complete' ? `<small>${message.state === 'failed' ? 'Reply failed. Message saved.' : 'Awaiting reply'}</small>` : ''}</article>${supervisionDrafts && message.supervision ? supervisionMarkup(incident, supervisionDrafts, message.id) : ''}`).join('');
   return `${messages.length > 4 ? `<details class="conversation-history"><summary>Earlier messages (${messages.length - 4})</summary>${render(messages.slice(0, -4))}</details>` : ''}${render(messages.slice(-4))}`;
 }
 
@@ -32,6 +32,7 @@ export function renderConversation(view, initial, navigate, { compact = false, o
   let summaryOpen = false;
   let selectedDocuments = [];
   let expertDraft = {};
+  const supervisionDrafts = {};
   const pending = () => incident.messages?.find(message => message.role === 'user' && message.state !== 'complete');
   const missing = () => ['description', 'location', 'occurredAt', 'impact'].filter(key => !incident[key]);
   async function run(operation, message) {
@@ -54,29 +55,45 @@ export function renderConversation(view, initial, navigate, { compact = false, o
   }
   function paint() {
     const waiting = pending();
-    const complete = missing().length === 0 && !waiting && !Object.keys(summaryDraft).length;
+    const complete = missing().length === 0 && !incident.conflicts?.length && !waiting && !Object.keys(summaryDraft).length;
     view.innerHTML = `${compact ? '' : '<a class="back-link" href="/incidents"><span class="back-arrow" aria-hidden="true">&larr;</span>Back to incidents</a>'}
       <header class="workspace-heading"><div class="${incident.id ? 'case-record-heading' : 'case-page-title'}"><p class="eyebrow">${e(incident.id || 'Case intake')}</p><h2>${incident.id ? e(incident.title || incident.id) : 'New incident'}</h2></div><span class="save-status" role="status">${e(notice)}</span></header>
       <p class="form-error" role="alert" ${errorText ? '' : 'hidden'}>${e(errorText)}</p>
       ${compact ? '' : '<nav class="section-jumps" aria-label="Intake sections"><a href="#message-form">Write a message</a><a href="#case-summary">Case summary / confirm</a></nav>'}<div class="conversation-layout${compact ? ' conversation-compact' : ''}" aria-busy="${busy}">
         <section class="conversation-main" aria-label="Incident conversation">
           <div class="message-log" role="log" aria-label="Case messages">
-            ${recentMessages(incident)}${documentMessagesMarkup(incident)}${compact ? expertMarkup(incident, expertDraft) : ''}
+            ${recentMessages(incident, compact ? supervisionDrafts : undefined)}${documentMessagesMarkup(incident)}${compact ? expertMarkup(incident, expertDraft) : ''}
           </div>
           ${waiting ? `<div class="retry-row"><span>Message saved. ${busy ? 'Analyzing...' : e(waiting.analysisFailure?.message || 'Analysis incomplete.')} ${!busy && waiting.analysisFailure?.code ? `<small>Error: ${e(waiting.analysisFailure.code)}</small>` : ''}</span><button type="button" id="retry-message" ${busy ? 'disabled' : ''}>Retry analysis</button></div>` : ''}
           ${attachmentMarkup(incident, selectedDocuments, busy || Boolean(waiting))}
           <form id="message-form" class="message-composer"><label for="case-message">${selectedDocuments.length ? 'Question about selected files' : 'Message'}<textarea id="case-message" maxlength="${selectedDocuments.length ? 2000 : 6000}" rows="3" required ${busy || waiting ? 'disabled' : ''} placeholder="Describe the issue or ask about an attachment">${e(draftText)}</textarea></label><div class="actions"><button class="primary" type="submit" ${busy || waiting ? 'disabled' : ''}>Send message</button></div></form>
         </section>
-        <${compact ? 'details' : 'aside'} id="case-summary" class="case-summary" aria-label="Incident summary" ${compact && (summaryOpen || complete) ? 'open' : ''}>${compact ? '<summary>Case facts & confirmation</summary>' : '<h3>Case summary</h3>'}
+        <${compact ? 'details' : 'aside'} id="case-summary" class="case-summary" aria-label="Incident summary" ${compact && (summaryOpen || complete || incident.conflicts?.length) ? 'open' : ''}>${compact ? '<summary>Case facts & confirmation</summary>' : '<h3>Case summary</h3>'}
+          ${(incident.conflicts || []).map((item, index) => `<div class="field-conflict"><strong>Confirm ${e(labels[item.field])}</strong><p>Current: ${e(item.current || 'Not provided')}<br>New: ${e(item.proposed)}</p><div class="actions"><button data-conflict="${index}" data-choice="current" ${busy ? 'disabled' : ''}>Keep current</button><button data-conflict="${index}" data-choice="proposed" ${busy ? 'disabled' : ''}>Use new value</button></div></div>`).join('')}
           ${details(incident)}
           ${incident.id ? `<details class="summary-editor" ${Object.keys(summaryDraft).length ? 'open' : ''}><summary>Edit summary</summary><form id="summary-form"><fieldset ${busy ? 'disabled' : ''}>${Object.entries(labels).filter(([key]) => key !== 'priority').map(([key, label]) => `<label>${label}${key === 'category' ? `<select name="${key}">${options(categories, summaryDraft[key] ?? incident[key], 'Unclassified')}</select>` : `<textarea name="${key}" maxlength="6000" rows="${key === 'description' ? 3 : 1}">${e(summaryDraft[key] ?? incident[key])}</textarea>`}</label>`).join('')}<button type="submit">Save changes</button></fieldset></form></details>` : ''}
-          <div class="summary-submit"><p>${missing().length ? `Still needed: ${missing().map(key => labels[key]).join(', ')}` : waiting ? 'Complete message analysis before submitting.' : 'Ready for your confirmation.'}</p><button id="confirm-case" class="primary" ${busy || !complete || !incident.id ? 'disabled' : ''}>Confirm &amp; submit</button></div>
+          <div class="summary-submit"><p>${missing().length ? `Still needed: ${missing().map(key => labels[key]).join(', ')}` : incident.conflicts?.length ? 'Resolve the highlighted information.' : waiting ? 'Complete message analysis before submitting.' : 'Ready for your confirmation.'}</p><button id="confirm-case" class="primary" ${busy || !complete || !incident.id ? 'disabled' : ''}>Confirm &amp; submit</button></div>
         </${compact ? 'details' : 'aside'}>
       </div>`;
     if (compact) {
       const summary = view.querySelector('#case-summary');
+      const log = view.querySelector('.message-log');
+      summary.querySelectorAll('.field-conflict').forEach(el => log.append(el));
       summary.remove();
     }
+    view.querySelectorAll('[data-supervision-message]').forEach(form => {
+      const id = form.dataset.supervisionMessage;
+      const capture = () => { supervisionDrafts[id] = { ...Object.fromEntries(new FormData(form)), confirmed: form.elements.confirmed.checked }; };
+      form.oninput = capture;
+      form.onsubmit = event => {
+        event.preventDefault(); capture();
+        run(async () => {
+          incident = (await api(`/api/cases/${encodeURIComponent(incident.id)}/confirmations`, { method: 'POST', body: JSON.stringify({ ...supervisionDrafts[id], messageId: id, revision: incident.revision || 0 }) })).incident;
+          delete supervisionDrafts[id];
+        }, 'Recording decision...');
+      };
+      form.querySelectorAll('input, textarea, select, button').forEach(el => { el.disabled = busy; });
+    });
     const expertForm = view.querySelector('[data-expert-solution]');
     if (expertForm) {
       const capture = () => {
@@ -142,6 +159,10 @@ export function renderConversation(view, initial, navigate, { compact = false, o
       const values = Object.fromEntries(new FormData(event.target));
       const changed = Object.fromEntries(Object.entries(values).filter(([key, value]) => value.trim() !== (incident[key] || '')));
       run(async () => { await patch(changed); summaryDraft = {}; }, 'Saving changes...');
+    });
+    view.querySelectorAll('[data-conflict]').forEach(button => button.onclick = () => {
+      const item = incident.conflicts[Number(button.dataset.conflict)];
+      run(() => patch({ [item.field]: item[button.dataset.choice] }), 'Saving confirmation...');
     });
     const confirmButton = view.querySelector('#confirm-case');
     if (confirmButton) confirmButton.onclick = () => run(async () => {

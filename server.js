@@ -293,8 +293,9 @@ export function createHandler(store = createIncidentStore(process.env.DATA_FILE 
       const analysis = assessIntake({ ...incident, ...data });
       if (!analysis.fields.description) return sendJson(res, 422, { error: 'A description is required.' });
       if (match[2] && !analysis.readyForTriage) return sendJson(res, 422, { error: 'Complete the required information before submitting.', ...analysis });
+      if (match[2] && conflicts.length) return sendJson(res, 422, { error: 'Resolve conflicting facts before submitting.', conflicts });
       if (match[2] && incident.messages?.some(message => message.role === 'user' && message.state !== 'complete')) return sendJson(res, 422, { error: 'Resolve pending messages before submitting.' });
-      const status = match[2] ? 'ready_for_triage' : (analysis.readyForTriage ? 'draft' : 'needs_info');
+      const status = match[2] ? 'ready_for_triage' : (analysis.readyForTriage && !conflicts.length ? 'draft' : 'needs_info');
       return sendJson(res, 200, { incident: await store.update(incident.id, { ...analysis.fields, status, conflicts, manualFields: [...new Set([...manualFieldsFor(incident), ...Object.keys(data)])] }, body.revision ?? (incident.revision || 0)) });
     }
     return sendJson(res, 405, { error: 'Method not allowed.' });
