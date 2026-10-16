@@ -63,7 +63,7 @@ test('role matrix allows admin publication but preserves other approval boundari
     assert.equal(permitted(u('admin'), path, 'POST'), true);
   }
   for (const path of ['/api/review/case', '/api/library/p/versions/1.0/activate', '/api/learning/c/r/p/review']) {
-    assert.equal(permitted(u('reviewer'), path, 'POST'), true);
+    assert.equal(permitted(u('reviewer'), path, 'POST'), !path.startsWith('/api/library/'));
   }
   assert.equal(permitted(u('viewer'), '/api/incidents', 'POST'), false);
   assert.equal(permitted(u('viewer'), '/api/studio', 'GET'), true);
@@ -108,4 +108,15 @@ test('authenticated author can confirm own knowledge under the default policy', 
   const input = { revision: r.revision, authenticatedActor: actor, authenticatedRoles: ['admin'] };
   const published = await studio.change(r.id, 'publish', input);
   assert.equal(published.releases.at(-1).identityVerified, true); assert.equal(published.releases.at(-1).actorId, 'author-id');
+});
+
+test('published Pill edits reject non-admin roles before any mutation', async () => {
+  const studio={get:async()=>({state:'draft',releases:[{pill:{version:'1'}}]})};
+  const handler=createHandler({},undefined,undefined,studio);
+  const app=(req,res)=>{req.authenticatedRoles=['expert'];return handler(req,res);};
+  for(const suffix of ['fork','save','prepare-draft','documents','save-evaluations']){
+    const result=await request(app,'POST',`/api/studio/published/${suffix}`,{});
+    assert.equal(result.status,403);
+    assert.match(result.body.error,/Only administrators/);
+  }
 });

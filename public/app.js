@@ -19,7 +19,7 @@ function updateNavigation() {
 function updateSubview() {
   const path = window.location.pathname;
   syncPageTabs(pageRoot, path, window.location.search, currentUser().roles.includes('admin'));
-  selectSubview(pageRoot, window.location.search, path.startsWith('/library') ? 'content' : path === '/settings' ? 'account' : 'draft');
+  selectSubview(pageRoot, window.location.search, path.endsWith('/compare') ? 'versions' : path.startsWith('/library') ? 'content' : path === '/settings' ? 'account' : 'draft');
   syncWorkspaceHeader(pageRoot, path, currentUser());
 }
 function navigate(path) { window.history.pushState({}, '', canonicalPath(path)); renderRoute(); }

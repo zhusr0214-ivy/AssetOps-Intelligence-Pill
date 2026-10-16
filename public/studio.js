@@ -14,7 +14,7 @@ export async function renderStudio(root,path,navigate) {
     }
     const match=path.match(/^\/studio\/([^/]+)$/);if(!match)throw new Error('Pill page not found.');
     const base=`/api/studio/${encodeURIComponent(match[1])}`;let {record}=await api(base);
-    const user=currentUser(),canEdit=user?.roles?.some(r=>['admin','expert'].includes(r));
+    const user=currentUser(),published=record.state==='published'||record.releases?.length,canEdit=user?.roles?.includes('admin')||(!published&&user?.roles?.includes('expert'));
     if(record.state!=='published'&&canEdit&&(record.documents||[]).some(d=>d.status==='extracted'&&!d.draftApplied&&d.status!=='reviewed')){
       record=(await api(`${base}/prepare-draft`,{method:'POST',body:JSON.stringify({revision:record.revision})})).record;
     }

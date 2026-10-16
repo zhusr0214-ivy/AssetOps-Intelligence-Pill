@@ -62,13 +62,13 @@ test('page tabs sit directly after the heading and synchronize without repeated 
   assert.equal(root.querySelectorAll('.workspace-tabs').length, 1);
   syncPageTabs(root, '/library/PILL-1', '?view=versions', true);
   assert.equal(root.querySelector('[data-page-tabs]'), tabs);
-  assert.equal(tabs.querySelector('[aria-current=page]').textContent, 'Versions & management');
+  assert.equal(tabs.querySelector('[aria-current=page]').textContent, 'Version management');
 });
 
 test('case links preserve incident identity and library links preserve selected version', () => {
   const cases = workspaceLinks('/cases/INC-1/triage');
   assert.deepEqual(cases, []);
-  assert.ok(workspaceLinks('/library/PILL-1/versions/2').some(([href]) => href === '/library/PILL-1/versions/2?view=evidence'));
+  assert.ok(workspaceLinks('/library/PILL-1/versions/2').some(([href]) => href === '/library/PILL-1/versions/2?view=versions'));
   assert.equal(workspaceLinks('/settings', false).length, 0);
   assert.equal(workspaceLinks('/settings', true).length, 0);
 });
@@ -103,4 +103,13 @@ test('new and existing Pills have no workflow-step tabs',()=>{
  for(const path of ['/studio/new','/studio/new/upload','/studio/new/expert','/studio/p1']){
   assert.equal(pageTabsMarkup(path),'');assert.equal(pageTabsMarkup(path,'?view=evaluation'),'');
  }
+});
+
+
+test('Library exposes exactly content and version-management tabs, including comparison', t => {
+ const dom=new JSDOM(pageTabsMarkup('/library/P1/compare',''));
+ t.after(()=>dom.window.close());
+ const links=[...dom.window.document.querySelectorAll('a')];
+ assert.deepEqual(links.map(a=>a.textContent),['Content','Version management']);
+ assert.equal(dom.window.document.querySelector('[aria-current="page"]').textContent,'Version management');
 });

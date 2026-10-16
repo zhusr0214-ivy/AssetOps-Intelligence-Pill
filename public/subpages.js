@@ -16,7 +16,7 @@ export function workspaceLinks(path, admin = false) {
   if (path.startsWith('/library')) {
     const match = path.match(/^\/library\/([^/]+)/);
     const base = path.includes('/versions/') ? path : match ? `/library/${match[1]}` : '/library';
-    return [['/library', 'Approved Pills'], ...(match ? [[base, 'Pill content'], [`${base}?view=versions`, 'Versions & management'], [`${base}?view=evidence`, 'Sources & evaluation'], [`/library/${match[1]}/compare`, 'Compare versions']] : [])];
+    return [['/library', 'Approved Pills'], ...(match ? [[base, 'Content'], [`${base}?view=versions`, 'Version management']] : [])];
   }
   return [['/settings', 'My account'], ...(admin ? [['/settings?view=users', 'Users & roles']] : [])];
 }
@@ -32,6 +32,7 @@ export function navigationMarkup(modules, path) {
 }
 
 export function pageTabsMarkup(path, search = '', admin = false) {
+  if(canonicalPath(path)==='/library')return '';
   path=canonicalPath(path);
   if(path==='/studio'||path.startsWith('/studio/'))return '';
   if (/^\/studio\/[^/]+$/.test(path) && new URLSearchParams(search).get('view') === 'preview') return '';
@@ -42,10 +43,10 @@ export function pageTabsMarkup(path, search = '', admin = false) {
   if (/^\/studio\/[^/]+$/.test(path) && !['/studio/new'].includes(path)) links = links.filter(([href]) => href.includes('?view='));
   if (path.startsWith('/library/')) links = links.filter(([href]) => href !== '/library');
   const fallback = path.startsWith('/studio') ? 'draft' : path.startsWith('/library') ? 'content' : 'account';
-  const value = new URLSearchParams(search).get('view');
+  const value = path.endsWith('/compare') ? 'versions' : new URLSearchParams(search).get('view');
   const rawView = path === '/settings' && (!admin || value !== 'users') ? 'account' : value || fallback;
   const requested = path.startsWith('/studio/') && rawView === 'sources' ? 'draft' : rawView;
-  const current = path.startsWith('/cases/') ? path.replace(/\/(edit|triage)$/, '').replace(/\/tasks$/, '/handling') : path;
+  const current = path.endsWith('/compare') ? path.replace(/\/compare$/, '') : path.startsWith('/cases/') ? path.replace(/\/(edit|triage)$/, '').replace(/\/tasks$/, '/handling') : path;
   if (!links.length) return '';
   return `<nav class="workspace-tabs" data-page-tabs aria-label="Workspace views">${links.map(([href, label]) => {
     const [target, query] = href.split('?');

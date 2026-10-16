@@ -117,6 +117,11 @@ export function createHandler(store = createIncidentStore(process.env.DATA_FILE 
  try {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const path = url.pathname;
+  const publishedEdit = path.match(/^\/api\/studio\/([^/]+)(?:\/|$)/);
+  if (publishedEdit && !['GET','HEAD'].includes(req.method) && req.authenticatedRoles && !req.authenticatedRoles.includes('admin')) {
+    const record = await studio.get(decodeURIComponent(publishedEdit[1]));
+    if (record.state === 'published' || record.releases?.length) return sendJson(res, 403, { error: 'Only administrators can edit published Pills.' });
+  }
   const recordMatch = path.match(/^\/api\/cases\/([^/]+)\/(confirmations|result-summary|expert-solutions|expert-experience-confirmation)$/);
   if (recordMatch && req.method === 'POST') {
     const [, id, operation] = recordMatch;

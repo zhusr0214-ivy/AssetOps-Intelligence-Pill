@@ -1013,3 +1013,15 @@ input, select, textarea { accent-color: #262626; }
 
 .pill-step-tabs > span {padding:14px 0;color:var(--muted);opacity:.65;cursor:default;}
 .pill-step-tabs [aria-current="step"] {color:var(--ink);font-weight:600;border-bottom:3px solid var(--ink);}
+
+/* Library follows the same searchable list layout as Case Workspace. */
+.library-conversations .workspace-heading { margin-bottom: 0; }
+.library-search-status { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+.library-release-meta { margin: 28px 0 12px; padding-top: 18px; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
+.library-release-facts { display: flex; flex-wrap: wrap; gap: 18px 44px; margin: 0; }
+.library-release-facts > div { min-width: 130px; }
+.library-release-facts dt { margin: 0 0 4px; color: var(--muted); font-size: 12px; font-weight: 400; }
+.library-release-facts dd { margin: 0; color: var(--ink); font-size: 14px; font-weight: 600; line-height: 1.5; }
+.page-version-note { color: var(--muted); font-size: 13px; font-weight: 400; line-height: 1.4; white-space: nowrap; }
+.page-title-group:has(.page-version-note) { align-items: baseline; }

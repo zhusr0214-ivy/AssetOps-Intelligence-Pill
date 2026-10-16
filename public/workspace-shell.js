@@ -11,6 +11,13 @@ export function syncWorkspaceHeader(root, path, user) {
   if (newPill) newPill.hidden = path !== '/studio' || !user?.roles?.some(role => ['admin', 'expert'].includes(role));
   const heading = root.querySelector('.workspace-heading');
   const source = heading?.querySelector('h2');
+  const versionText=heading?.querySelector('[data-version-note]')?.textContent || '';
+  let versionNote=doc.querySelector('#page-version-note');
+  if(versionText){
+    if(!versionNote){versionNote=doc.createElement('span');versionNote.id='page-version-note';versionNote.className='page-version-note';title.after(versionNote);}
+    if(versionNote.textContent!==versionText)versionNote.textContent=versionText;
+  }else versionNote?.remove();
+
   const text = source?.textContent || titles[path.split('/')[1]] || 'Workspace';
   if (title.textContent !== text) title.textContent = text;
   if (source) {

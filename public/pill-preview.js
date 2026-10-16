@@ -1,25 +1,35 @@
 import {api, escapeHtml as e} from './incidents.js';
 import {currentUser} from './session.js';
 
+export function pillContentMarkup(p, {hideEmptyOptional=false, anchors=false, showEscalation=true}={}) {
+  const anchor = value => anchors && value ? ` id="${e(encodeURIComponent(`${p.id}${p.status==='approved'?`-${p.version}`:''}-${value}`))}"` : '';
+  const rows = (label, key, field, optional=false) => {
+    const values=(p[key]||[]).map(item=>({id:item?.id,text:field ? item[field] || (key==='rules'?item.cardExplanation:'') || item.title : item})).filter(item=>item.text);
+    if(optional && hideEmptyOptional && !values.length)return '';
+    return `<section class="triage-section" data-collection="${key}"><h3>${label}</h3>${values.map(item=>`<p class="source-text"${anchor(item.id)}>${e(item.text)}</p>`).join('') || '<p>Not specified</p>'}</section>`;
+  };
+  return `<article class="pill-content-preview"><section class="triage-section"><h3>Scope</h3><p class="source-text">${e(p.scope || 'Not specified')}</p></section>${rows('Actions','actions','instruction')}${rows('Decision rules','rules','guidance')}${rows('Operating limits','boundaries',null,true)}${showEscalation ? rows('Escalation','escalationConditions',null,true) : ''}</article>`;
+}
+
 export function previewMarkup(record, editing=false) {
   const p=record.content.pill;
   const text=(label,key)=>editing?`<label>${label}<textarea name="${key}" rows="3" maxlength="4000">${e(p[key]||'')}</textarea></label>`:`<section class="triage-section"><h3>${label}</h3><p class="source-text">${e(p[key]||'Not specified')}</p></section>`;
   const collection=(label,key,field)=>`<section class="triage-section" data-collection="${key}"><h3>${label}</h3>${(p[key]||[]).map((item,i)=>editing?`<div data-item="${i}" class="pill-draft-item"><textarea rows="3" maxlength="2000" aria-label="${label} ${i+1}">${e(field?item[field]:item)}</textarea><button type="button" data-remove="${key}" data-index="${i}" aria-label="Remove ${label.toLowerCase()} ${i+1}" title="Remove">&times;</button></div>`:`<p class="source-text">${e(field?item[field]:item)}</p>`).join('')||(!editing?'<p>Not specified</p>':'')}${editing?`<button type="button" data-add="${key}" aria-label="Add ${label.toLowerCase()}" title="Add ${label.toLowerCase()}">+</button>`:''}</section>`;
   return `<header class="workspace-heading"><h2>${e(p.name)}</h2><span class="badge">${e(record.state==='published'?'Published':'Draft')}</span></header>
-  <article class="pill-content-preview">
+  ${editing ? `<article class="pill-content-preview">
     ${editing?`<label>Pill name<input name="name" maxlength="200" value="${e(p.name)}"></label>`:''}
     ${text('Scope','scope')}
     ${collection('Actions','actions','instruction')}
     ${collection('Decision rules','rules','guidance')}
     ${collection('Operating limits','boundaries')}
     ${collection('Escalation','escalationConditions')}
-  </article><p data-preview-status role="status"></p><p data-preview-error class="form-error source-text" role="alert" hidden></p>
+  </article>` : pillContentMarkup(p)}<p data-preview-status role="status"></p><p data-preview-error class="form-error source-text" role="alert" hidden></p>
   <div class="actions">${record.state==='published'?'<button type="button" data-edit-preview>Edit</button>':`<button type="button" data-edit-preview>${editing?'Cancel':'Edit'}</button><button type="button" data-delete-preview>Delete</button><button type="button" data-save-preview>Save</button><button type="button" class="primary" data-publish-preview>Publish</button>`}</div>`;
 }
 
 export function renderPillPreview(view,initialRecord,navigate,{editing=false}={}) {
   let record=initialRecord,working=structuredClone(record),busy=false;
-  const user=currentUser(),canEdit=user?.roles?.some(r=>['admin','expert'].includes(r)),isAdmin=user?.roles?.includes('admin');
+  const user=currentUser(),canEdit=user?.roles?.includes('admin')||(!(record.state==='published'||record.releases?.length)&&user?.roles?.includes('expert')),isAdmin=user?.roles?.includes('admin');
   const base=`/api/studio/${encodeURIComponent(record.id)}`;
   const request=async(operation,body={})=>(await api(`${base}/${operation}`,{method:'POST',body:JSON.stringify({...body,revision:record.revision})})).record;
   const capture=()=>{
@@ -37,6 +47,7 @@ export function renderPillPreview(view,initialRecord,navigate,{editing=false}={}
   const paint=()=>{
     view.innerHTML=previewMarkup(working,editing&&canEdit);
     view.querySelectorAll('button').forEach(b=>b.disabled=!canEdit||busy);
+    if(!canEdit&&(record.state==='published'||record.releases?.length))view.querySelector('[data-edit-preview]').hidden=true;
     const publish=view.querySelector('[data-publish-preview]');if(publish){publish.disabled=!isAdmin||busy;publish.title=isAdmin?'Publish':'Only administrators can publish';}
     view.querySelector('[data-edit-preview]').onclick=async()=>{
       if(!canEdit||busy)return;
